@@ -1,0 +1,9 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "packageRules": [
+    {"matchManagers": ["maven"], "groupName": "Maven dependencies"},
+    {"matchManagers": ["dockerfile", "docker-compose"], "groupName": "Docker images"},
+    {"matchManagers": ["github-actions"], "groupName": "GitHub Actions"}
+  ]
+}
