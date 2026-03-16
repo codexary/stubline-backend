@@ -1,2 +1,6 @@
 target/
 .DS_Store
+.mvn/repository/
+.mvn/maven.config
+.mvn/wrapper/dists/
+.mvn/wrapper/maven-wrapper.jar

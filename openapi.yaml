@@ -1,0 +1,174 @@
+openapi: 3.1.0
+info:
+  title: Stubline Ticketing API
+  license:
+    name: MIT
+    url: https://opensource.org/license/mit
+  version: 1.0.0-SNAPSHOT
+  description: Public event inventory and ordering API.
+security: []
+servers:
+  - url: http://localhost:18080
+paths:
+  /events/{eventId}/seats:
+    get:
+      operationId: listEventSeats
+      summary: List seats at an event
+      parameters:
+        - name: eventId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: concert-1
+      responses:
+        '200':
+          description: Seats and their current availability
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Seat'
+              example:
+                - id: A1
+                  eventId: concert-1
+                  available: true
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+  /orders:
+    post:
+      operationId: placeOrder
+      summary: Reserve a seat and place an order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlaceOrder'
+            example:
+              eventId: concert-1
+              seatId: A1
+      responses:
+        '201':
+          description: Seat reserved and order created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              example:
+                id: 8c487f71-15a2-4617-a752-0038c7263f20
+                eventId: concert-1
+                seatId: A1
+                createdAt: '2026-10-30T00:00:00Z'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+components:
+  responses:
+    BadRequest:
+      description: Invalid JSON or a missing or wrong-typed field
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Bad Request
+            status: 400
+            detail: eventId must be a non-empty string
+            instance: /orders
+            field: eventId
+    Conflict:
+      description: The seat was already reserved
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Conflict
+            status: 409
+            detail: seat unavailable
+            instance: /orders
+            seatId: A1
+    TooLarge:
+      description: Request body is too large
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Route does not exist
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: about:blank
+            title: Not Found
+            status: 404
+            detail: route not found
+            instance: /missing
+  schemas:
+    Seat:
+      type: object
+      additionalProperties: false
+      required: [id, eventId, available]
+      properties:
+        id:
+          type: string
+          example: A1
+        eventId:
+          type: string
+          example: concert-1
+        available:
+          type: boolean
+          example: true
+    PlaceOrder:
+      type: object
+      required: [eventId, seatId]
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+        seatId:
+          type: string
+          minLength: 1
+    Order:
+      type: object
+      additionalProperties: false
+      required: [id, eventId, seatId, createdAt]
+      properties:
+        id:
+          type: string
+        eventId:
+          type: string
+        seatId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      required: [type, title, status, detail, instance]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        field:
+          type: string
+        seatId:
+          type: string
