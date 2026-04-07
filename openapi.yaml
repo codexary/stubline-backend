@@ -36,8 +36,12 @@ paths:
                   available: true
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/Timeout'
         '413':
           $ref: '#/components/responses/TooLarge'
+        '431':
+          $ref: '#/components/responses/HeadersTooLarge'
   /orders:
     post:
       operationId: placeOrder
@@ -67,8 +71,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '408':
+          $ref: '#/components/responses/Timeout'
         '413':
           $ref: '#/components/responses/TooLarge'
+        '431':
+          $ref: '#/components/responses/HeadersTooLarge'
 components:
   responses:
     BadRequest:
@@ -97,6 +105,18 @@ components:
             detail: seat unavailable
             instance: /orders
             seatId: A1
+    Timeout:
+      description: Request read timed out
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    HeadersTooLarge:
+      description: Request line or headers exceed limits
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     TooLarge:
       description: Request body is too large
       content:

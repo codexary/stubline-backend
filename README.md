@@ -26,7 +26,7 @@ The detector stays in `ticketing-api`'s `health` package because it observes the
 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='sender api-b 127.0.0.1 9999 200'
 ```
 
-Expected detector transitions include `api-a ALIVE` and `api-b ALIVE`. Sender `api-a` logs `dropped api-a sequence=3` (and every third sequence); the detector remains alive if subsequent packets arrive before 700 ms. Stop a sender with Ctrl-C: about 700 ms after its last accepted packet the detector logs `api-a SUSPECTED`. Temporarily suspend the same sender process with Ctrl-Z and resume it with `fg`: it logs `api-a ALIVE` when a newer sequence arrives. A fresh sender process must use a new instance id until the detector restarts, because sequence numbers restart at 1. The tests also inject reordered and duplicate sequences and show a slow instance can be suspected and recover. `SUSPECTED` is only an observation about missing timely packets; it cannot distinguish a stopped process from delay or packet loss.
+The detector prints the complete membership snapshot whenever any instance changes state. Expected detector transitions include `api-a ALIVE` and `api-b ALIVE`. Sender `api-a` logs `dropped api-a sequence=3` (and every third sequence); the detector remains alive if subsequent packets arrive before 700 ms. Stop a sender with Ctrl-C: about 700 ms after its last accepted packet the detector logs `api-a SUSPECTED`. Temporarily suspend the same sender process with Ctrl-Z and resume it with `fg`: it logs `api-a ALIVE` when a newer sequence arrives. A fresh sender process must use a new instance id until the detector restarts, because sequence numbers restart at 1. The tests also inject reordered and duplicate sequences and show a slow instance can be suspected and recover. `SUSPECTED` is only an observation about missing timely packets; it cannot distinguish a stopped process from delay or packet loss.
 
 To inspect the UDP datagrams on Linux, in another terminal run `sudo tcpdump -i lo -n -X udp port 9999`; on macOS use `-i lo0`. Expected: UDP packets to port 9999 with a version byte, length-prefixed UTF-8 instance id, 64-bit sequence and 64-bit timestamp. This command needs capture privileges.
 
@@ -46,11 +46,32 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://127.0.0.1:18080/orders
 ```
 
-Expected `curl -v` response status lines are `< HTTP/1.1 200 OK`, `< HTTP/1.1 201 Created`, and `< HTTP/1.1 409 Conflict`. The first body is `[{"id":"A1","eventId":"concert-1","available":true},{"id":"A2","eventId":"concert-1","available":true}]`. The second body contains `"seatId":"A1"`, a generated `id`, `createdAt`, and `eventId`; their order, ID and timestamp vary. The third body is a Problem Details object with status 409 and `seatId` A1. Both implementations use the same transport-independent routes. The raw parser demonstrates HTTP/1.1 framing and bounded request handling; the JDK server supplies the protocol implementation for normal use. Tests cover malformed request lines, POST without Content-Length, a body split across writes, and two requests on one keep-alive connection.
+Expected `curl -v` response status lines are `< HTTP/1.1 200 OK`, `< HTTP/1.1 201 Created`, and `< HTTP/1.1 409 Conflict`. The first body is `[{"id":"A1","eventId":"concert-1","available":true},{"id":"A2","eventId":"concert-1","available":true}]`. The second body contains `"seatId":"A1"`, a generated `id`, `createdAt`, and `eventId`; their order, ID and timestamp vary. The third body is an RFC 9457 problem response with `status: 409` and `seatId: A1`. Both implementations use the same transport-independent routes. The raw parser demonstrates HTTP/1.1 framing and bounded request handling; the JDK server supplies the protocol implementation for normal use. Tests cover malformed request lines, POST without Content-Length, a body split across writes, and two requests on one keep-alive connection.
+
+## Server executors under blocking load
+
+The raw HTTP server assigns one worker to each connection. Choose `THREAD_PER_REQUEST` for a platform thread per connection, `FIXED_POOL` for a bounded worker pool, or `VIRTUAL` for a virtual thread per connection. The JDK HTTP server accepts the same choices; its executor dispatches HTTP exchanges rather than socket connections. The final argument adds a blocking seat lookup delay in milliseconds to stand in for a slow database call. Run one server at a time from the repository root:
+
+```sh
+./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='raw 8080 FIXED_POOL 4 100'
+./mvnw -q -pl load-generator exec:java -Dexec.mainClass=com.elsworne.stubline.load.LoadGenerator -Dexec.args='http://127.0.0.1:8080/events/concert-1/seats 32 10'
+```
+
+The load generator prints successful requests per second and p50/p95/p99 latency. Replace `FIXED_POOL` with the other strategies for comparison. Use `loadtest/` for the k6 run. The loopback-only admin listener uses `STUBLINE_ADMIN_PORT` (default `8081`). Its diagnostic route `GET /diagnostics/thread` returns `{"virtual":true}` for virtual workers and `false` for platform workers.
+
+The raw server assigns each worker to a **connection**. Four keep-alive clients can occupy a four-worker pool while other accepted clients starve. Successful-request p95 hides those clients. The Java load generator reports each client's completions and timeouts plus clients with no completions; k6 gives each request 2 seconds and checks the failure rate. The JDK server dispatches each HTTP exchange, letting a worker return between requests.
+
+## HTTP contract and limits
+
+`openapi.yaml` is the public OpenAPI 3.1 contract. Run `docker run --rm -v "$PWD:/spec" -w /spec redocly/cli:2.64.1@sha256:b9b4585a3bda40f77b58f5fa4535ad5ce7b7d1e4d6f8ed98ebc2c7694dbf3f5b lint openapi.yaml` to lint it. The default Maven build validates real raw and JDK HTTP responses using Atlassian OpenAPI Request Validator 3.0.0, which supports OpenAPI 3.1. Errors use RFC 9457 problem details. The request line and each header line are limited to 8192 bytes, request bodies to 1 MiB, and reads to 5 seconds. Diagnostics are only available on the loopback admin port and are never published by the public listener.
+
+## Configuration
+
+| Name | Meaning | Default | Required |
+| --- | --- | --- | --- |
+| `STUBLINE_ADMIN_PORT` | Loopback diagnostics listener | `8081` | No |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system and SBOM for fixable HIGH and CRITICAL vulnerabilities. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
-
-The public contract is `openapi.yaml` (OpenAPI 3.1). Check it with `docker run --rm -v "$PWD:/spec" -w /spec redocly/cli:2.64.1@sha256:b9b4585a3bda40f77b58f5fa4535ad5ce7b7d1e4d6f8ed98ebc2c7694dbf3f5b lint openapi.yaml`. The default Maven build starts both raw and JDK servers in process and validates their actual status, content type and JSON bodies with Atlassian OpenAPI Request Validator 3.0.0. This maintained release supports OpenAPI 3.1 and Java 21. Invalid requests return RFC 9457 `application/problem+json` with a field name where relevant.
 
 ## License
 

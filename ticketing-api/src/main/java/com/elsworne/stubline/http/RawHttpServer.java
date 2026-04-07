@@ -23,11 +23,17 @@ public final class RawHttpServer implements AutoCloseable {
   private static final int MAX_BODY = 1_048_576;
   private final TicketingApi api;
   private final ServerSocket server;
-  private final ExecutorService clients = Executors.newVirtualThreadPerTaskExecutor();
+  private final ExecutorService clients;
   private final ExecutorService acceptor = Executors.newSingleThreadExecutor();
 
   public RawHttpServer(int port, TicketingApi api) throws IOException {
+    this(port, api, ServerExecutor.VIRTUAL, 16);
+  }
+
+  public RawHttpServer(int port, TicketingApi api, ServerExecutor strategy, int poolSize)
+      throws IOException {
     this.api = api;
+    this.clients = strategy.create(poolSize);
     this.server = new ServerSocket(port);
   }
 
@@ -55,7 +61,7 @@ public final class RawHttpServer implements AutoCloseable {
     try (socket;
         InputStream in = socket.getInputStream();
         OutputStream out = socket.getOutputStream()) {
-      socket.setSoTimeout(30_000);
+      socket.setSoTimeout(5_000);
       try {
         while (true) {
           String line = readLine(in);
@@ -73,7 +79,7 @@ public final class RawHttpServer implements AutoCloseable {
             line = readLine(in);
             if (line == null) throw new BadRequestException();
             if (line.isEmpty()) break;
-            if (headers.size() >= 100) throw new BadRequestException();
+            if (headers.size() >= 100) throw new TooLargeHeadersException();
             int colon = line.indexOf(':');
             if (colon <= 0) throw new BadRequestException();
             String key = line.substring(0, colon).toLowerCase(Locale.ROOT);
@@ -99,15 +105,28 @@ public final class RawHttpServer implements AutoCloseable {
           boolean close = "close".equalsIgnoreCase(headers.getOrDefault("connection", ""));
           write(
               out,
-              api.handle(new HttpRequest(requestLine[0], requestLine[1], headers, body)),
+              requestLine[1].startsWith("/diagnostics/")
+                  ? ProblemDetails.of(404, "Not Found", "route not found", requestLine[1])
+                  : api.handle(new HttpRequest(requestLine[0], requestLine[1], headers, body)),
               close);
           if (close) return;
         }
+      } catch (TooLargeHeadersException e) {
+        write(
+            out,
+            ProblemDetails.of(
+                431,
+                "Request Header Fields Too Large",
+                "Request line or headers exceed limit",
+                "/"),
+            true);
       } catch (TooLargeBodyException e) {
         write(
             out,
             ProblemDetails.of(413, "Content Too Large", "Request body exceeds limit", "/"),
             true);
+      } catch (java.net.SocketTimeoutException e) {
+        write(out, ProblemDetails.of(408, "Request Timeout", "Request read timed out", "/"), true);
       } catch (BadRequestException e) {
         write(out, ProblemDetails.of(400, "Bad Request", "invalid framing", "/"), true);
       }
@@ -130,7 +149,7 @@ public final class RawHttpServer implements AutoCloseable {
         return new String(raw, 0, raw.length - 1, StandardCharsets.ISO_8859_1);
       }
       bytes.write(value);
-      if (bytes.size() > MAX_LINE) throw new BadRequestException();
+      if (bytes.size() > MAX_LINE) throw new TooLargeHeadersException();
       previous = value;
     }
   }
@@ -150,12 +169,7 @@ public final class RawHttpServer implements AutoCloseable {
             + "\r\n"
             + "Connection: "
             + (close ? "close" : "keep-alive")
-            + "\r\n"
-            + reply.headers().entrySet().stream()
-                .filter(entry -> !entry.getKey().equalsIgnoreCase("Content-Type"))
-                .map(entry -> entry.getKey() + ": " + entry.getValue() + "\r\n")
-                .collect(java.util.stream.Collectors.joining())
-            + "\r\n";
+            + "\r\n\r\n";
     out.write(head.getBytes(StandardCharsets.ISO_8859_1));
     out.write(reply.body());
     out.flush();
@@ -168,7 +182,9 @@ public final class RawHttpServer implements AutoCloseable {
     clients.shutdownNow();
   }
 
-  private static final class TooLargeBodyException extends IOException {}
-
   private static final class BadRequestException extends IOException {}
+
+  private static final class TooLargeHeadersException extends IOException {}
+
+  private static final class TooLargeBodyException extends IOException {}
 }
