@@ -61,7 +61,39 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 
 负载生成器输出每秒成功请求数及 p50/p95/p99 延迟。将 `FIXED_POOL` 换成另两种策略作比较。k6 运行方式见 `loadtest/`。仅在回环管理端口（`STUBLINE_ADMIN_PORT`，默认 `8081`）提供诊断路由 `GET /diagnostics/thread` 对虚拟 worker 返回 `{"virtual":true}`，对平台 worker 返回 `false`。
 
+## 一个座位只允许一个赢家
+
+`UnsafeInventory` 演示 check-then-act 竞态：两个买家都可能看到可用座位。`InMemoryInventory.reserve` 同步检查与更新，因此单进程只允许一个买家成功。`PostgresInventory` 用两种可选策略跨进程保持该约束：`ROW_LOCK` 在事务内使用 `SELECT ... FOR UPDATE`；`OPTIMISTIC` 读取版本，再执行 `UPDATE ... WHERE version = ? AND available = TRUE`，冲突时重试。Flyway 创建 `seats` 表，HikariCP 限制 JDBC 连接数。
+
+```sh
+./mvnw -q verify
+./mvnw -q -Pdocker verify
+docker compose up -d postgres
+```
+
+默认验证运行受控的内存竞态测试，跳过标记为 `docker` 的 PostgreSQL 测试。在可用 Docker 的环境中，`-Pdocker` 启动 Testcontainers PostgreSQL，分别让 32 个买家运行两种数据库策略，断言恰好一个成功并输出 optimistic retry 次数。`compose.yaml` 提供固定版本的本地 PostgreSQL，供手动探索。在已安装并启动 Docker 的主机上运行 Docker profile 和 Compose 命令。
+
+运行 `docker compose up -d postgres` 后，用 PostgreSQL 提供 order 服务：
+
+```sh
+STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/stubline STUBLINE_DB_USER=stubline STUBLINE_DB_PASSWORD=stubline STUBLINE_DB_STRATEGY=ROW_LOCK ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
+```
+
+使用 `STUBLINE_DB_STRATEGY=OPTIMISTIC` 比较版本更新。Flyway 在启动时执行迁移；示例座位可重复插入。未设置 `STUBLINE_JDBC_URL` 时，server 使用同步的内存 inventory。
+
+使用完毕后停止本地数据库：
+
+```sh
+docker compose down
+```
+
+原始 server 的有界线程池把 worker 分配给**连接**。HTTP keep-alive 会使四个 worker 长时间留在四条连接上，其他客户端饥饿；成功请求的 p95 看不出这一点。Java 生成器现输出每个客户端的完成数、超时数以及零完成客户端数；k6 在 2 秒后使请求超时并检查失败率。JDK `HttpServer` 的 executor 分派每个 HTTP exchange，worker 可在请求之间回到线程池。
+
+`versionConflicts` 是因版本不匹配而失败的更新数；`retries` 是其后的重试次数。即使 32 个买家同时开始，多数也可能在座位售出后才读到状态并直接返回，因此不一定有 31 次冲突。
+
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统和 SBOM，对有修复版本的 HIGH、CRITICAL 漏洞失败。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
+
+座位列表支持 `limit`（1–100，默认 20）和不透明 `cursor`；响应包含 `seats` 与 `next`。本地 PostgreSQL 配置见 `.env.example`，复制为 `.env`；启用数据库时必须提供用户和密码。
 
 ## 许可证
 

@@ -1,5 +1,6 @@
 package com.elsworne.stubline.http;
 
+import com.elsworne.stubline.inventory.pg.PostgresInventory;
 import java.util.concurrent.CountDownLatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,7 +15,22 @@ public final class TicketingMain {
     String mode = args.length > 0 ? args[0] : "raw";
     int port = args.length > 1 ? Integer.parseInt(args[1]) : 8080;
     long lookupDelayMillis = args.length > 4 ? Long.parseLong(args[4]) : 0;
-    var api = TicketingApi.sample(lookupDelayMillis);
+    String jdbcUrl = System.getenv("STUBLINE_JDBC_URL");
+    PostgresInventory postgres = null;
+    TicketingApi api;
+    if (jdbcUrl == null || jdbcUrl.isBlank()) api = TicketingApi.sample(lookupDelayMillis);
+    else {
+      postgres =
+          new PostgresInventory(
+              jdbcUrl,
+              requireEnv("STUBLINE_DB_USER"),
+              requireEnv("STUBLINE_DB_PASSWORD"),
+              PostgresInventory.Strategy.valueOf(
+                  System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
+      postgres.add("concert-1", "A1");
+      postgres.add("concert-1", "A2");
+      api = new TicketingApi(postgres, lookupDelayMillis);
+    }
     ServerExecutor strategy =
         args.length > 2
             ? ServerExecutor.valueOf(args[2].toUpperCase(java.util.Locale.ROOT))
@@ -37,6 +53,15 @@ public final class TicketingMain {
           new CountDownLatch(1).await();
         }
       } else throw new IllegalArgumentException("Use raw or jdk");
+    } finally {
+      if (postgres != null) postgres.close();
     }
+  }
+
+  private static String requireEnv(String name) {
+    String value = System.getenv(name);
+    if (value == null || value.isBlank())
+      throw new IllegalStateException(name + " is required when STUBLINE_JDBC_URL is set");
+    return value;
   }
 }

@@ -46,7 +46,7 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://127.0.0.1:18080/orders
 ```
 
-Expected `curl -v` response status lines are `< HTTP/1.1 200 OK`, `< HTTP/1.1 201 Created`, and `< HTTP/1.1 409 Conflict`. The first body is `[{"id":"A1","eventId":"concert-1","available":true},{"id":"A2","eventId":"concert-1","available":true}]`. The second body contains `"seatId":"A1"`, a generated `id`, `createdAt`, and `eventId`; their order, ID and timestamp vary. The third body is an RFC 9457 problem response with `status: 409` and `seatId: A1`. Both implementations use the same transport-independent routes. The raw parser demonstrates HTTP/1.1 framing and bounded request handling; the JDK server supplies the protocol implementation for normal use. Tests cover malformed request lines, POST without Content-Length, a body split across writes, and two requests on one keep-alive connection.
+Expected `curl -v` response status lines are `< HTTP/1.1 200 OK`, `< HTTP/1.1 201 Created`, and `< HTTP/1.1 409 Conflict`. The first body contains `seats` with A1 and A2, and `next: null` when the page is complete. The second body contains `"seatId":"A1"`, a generated `id`, `createdAt`, and `eventId`; their order, ID and timestamp vary. The third body is an RFC 9457 problem response with `status: 409` and `seatId: A1`. Both implementations use the same transport-independent routes. The raw parser demonstrates HTTP/1.1 framing and bounded request handling; the JDK server supplies the protocol implementation for normal use. Tests cover malformed request lines, POST without Content-Length, a body split across writes, and two requests on one keep-alive connection.
 
 ## Server executors under blocking load
 
@@ -65,13 +65,48 @@ The raw server assigns each worker to a **connection**. Four keep-alive clients 
 
 `openapi.yaml` is the public OpenAPI 3.1 contract. Run `docker run --rm -v "$PWD:/spec" -w /spec redocly/cli:2.64.1@sha256:b9b4585a3bda40f77b58f5fa4535ad5ce7b7d1e4d6f8ed98ebc2c7694dbf3f5b lint openapi.yaml` to lint it. The default Maven build validates real raw and JDK HTTP responses using Atlassian OpenAPI Request Validator 3.0.0, which supports OpenAPI 3.1. Errors use RFC 9457 problem details. The request line and each header line are limited to 8192 bytes, request bodies to 1 MiB, and reads to 5 seconds. Diagnostics are only available on the loopback admin port and are never published by the public listener.
 
+## One seat, one winner
+
+`UnsafeInventory` demonstrates a check-then-act race: two buyers can both see an available seat. `InMemoryInventory.reserve` synchronizes the check and update, so one process admits only one buyer. `PostgresInventory` keeps that invariant across processes with two selectable strategies: `ROW_LOCK` uses `SELECT ... FOR UPDATE` inside a transaction; `OPTIMISTIC` reads a version and issues `UPDATE ... WHERE version = ? AND available = TRUE`, retrying a conflict. Flyway creates the `seats` table and HikariCP bounds JDBC connections.
+
+```sh
+./mvnw -q verify
+./mvnw -q -Pdocker verify
+docker compose up -d postgres
+```
+
+The default verification runs the gated in-memory race and skips the Docker-tagged PostgreSQL test. With Docker available, `-Pdocker` starts a Testcontainers PostgreSQL instance, runs 32 buyers through each database strategy, asserts exactly one winner and prints optimistic retry counts. `compose.yaml` supplies a pinned local PostgreSQL instance for manual exploration. Run the Docker profile and Compose commands on a host with Docker available.
+
+To serve orders from PostgreSQL after `docker compose up -d postgres`, run:
+
+```sh
+STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/stubline STUBLINE_DB_USER=stubline STUBLINE_DB_PASSWORD=stubline STUBLINE_DB_STRATEGY=ROW_LOCK ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
+```
+
+Use `STUBLINE_DB_STRATEGY=OPTIMISTIC` to compare versioned updates. Flyway applies the migration at startup; the sample seats are inserted idempotently. Without `STUBLINE_JDBC_URL`, the server retains the synchronized in-memory inventory.
+
+```sh
+docker compose down
+```
+
+The raw server's bounded pool assigns a worker to each **connection**. With HTTP keep-alive, four workers can remain occupied by four idle or repeatedly requesting clients, while other accepted connections wait indefinitely. Successful-request p95 therefore conceals starvation. The Java generator now prints per-client completions, timeouts and clients with no completions; k6 fails requests after 2 seconds and checks the resulting failure rate. JDK `HttpServer` invokes its executor for HTTP exchanges, allowing a worker to return to the pool between requests.
+
+`versionConflicts` counts optimistic updates that lost the version race; `retries` counts the subsequent attempts. Most of 32 buyers may read the seat only after it has sold and return immediately, so even a synchronized start does not imply 31 conflicts.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
 | --- | --- | --- | --- |
 | `STUBLINE_ADMIN_PORT` | Loopback diagnostics listener | `8081` | No |
+| `STUBLINE_JDBC_URL` | Enable PostgreSQL inventory | In-memory if absent | No |
+| `STUBLINE_DB_USER` | PostgreSQL user | None | When JDBC URL is set |
+| `STUBLINE_DB_PASSWORD` | PostgreSQL password | None | When JDBC URL is set |
+| `STUBLINE_DB_STRATEGY` | Reservation strategy | `ROW_LOCK` | No |
+| `STUBLINE_DB_NAME` | Compose database name | `stubline` | No |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system and SBOM for fixable HIGH and CRITICAL vulnerabilities. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
+
+Seat listing accepts `limit` (1–100, default 20) and an opaque `cursor`; the response has `seats` and `next`. Supply `next` as the next request's `cursor`. Copy `.env.example` to `.env` for local PostgreSQL use. Compose reads its database credentials from that file; the application stops at startup with a named error if PostgreSQL is enabled without credentials.
 
 ## License
 

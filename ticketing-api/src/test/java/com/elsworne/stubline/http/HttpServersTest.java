@@ -35,7 +35,7 @@ class HttpServersTest {
       var get = HttpRequest.newBuilder(seats).timeout(Duration.ofSeconds(3)).GET().build();
       var first = client.send(get, HttpResponse.BodyHandlers.ofString());
       assertEquals(200, first.statusCode());
-      assertEquals(2, json.readTree(first.body()).size());
+      assertEquals(2, json.readTree(first.body()).path("seats").size());
       URI orders = URI.create("http://localhost:" + port + "/orders");
       var post =
           HttpRequest.newBuilder(orders)
@@ -50,6 +50,7 @@ class HttpServersTest {
       assertEquals(409, client.send(post, HttpResponse.BodyHandlers.ofString()).statusCode());
       assertFalse(
           json.readTree(client.send(get, HttpResponse.BodyHandlers.ofString()).body())
+              .path("seats")
               .get(0)
               .path("available")
               .asBoolean());

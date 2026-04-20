@@ -21,19 +21,34 @@ paths:
           schema:
             type: string
           example: concert-1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          example: 1
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor returned by the preceding page.
       responses:
         '200':
           description: Seats and their current availability
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Seat'
+                $ref: '#/components/schemas/SeatPage'
               example:
-                - id: A1
-                  eventId: concert-1
-                  available: true
+                seats:
+                  - id: A1
+                    eventId: concert-1
+                    available: true
+                next: Y29uY2VydC0xOkEx
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '408':
@@ -136,6 +151,16 @@ components:
             detail: route not found
             instance: /missing
   schemas:
+    SeatPage:
+      type: object
+      required: [seats, next]
+      properties:
+        seats:
+          type: array
+          items:
+            $ref: '#/components/schemas/Seat'
+        next:
+          type: [string, 'null']
     Seat:
       type: object
       additionalProperties: false

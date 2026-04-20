@@ -107,7 +107,15 @@ public final class RawHttpServer implements AutoCloseable {
               out,
               requestLine[1].startsWith("/diagnostics/")
                   ? ProblemDetails.of(404, "Not Found", "route not found", requestLine[1])
-                  : api.handle(new HttpRequest(requestLine[0], requestLine[1], headers, body)),
+                  : api.handle(
+                      new HttpRequest(
+                          requestLine[0],
+                          requestLine[1].split("\\?", 2)[0],
+                          headers,
+                          body,
+                          requestLine[1].contains("?")
+                              ? requestLine[1].substring(requestLine[1].indexOf('?') + 1)
+                              : null)),
               close);
           if (close) return;
         }

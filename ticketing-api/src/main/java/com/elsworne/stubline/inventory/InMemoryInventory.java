@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /** A local seat inventory used before persistent storage is introduced. */
-public final class InMemoryInventory {
+public final class InMemoryInventory implements SeatInventory {
   private final Map<String, Map<String, Seat>> events = new LinkedHashMap<>();
 
   public synchronized void add(Seat seat) {

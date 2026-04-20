@@ -40,6 +40,36 @@ final class OpenApiContractTest {
               HttpRequest.newBuilder(uri(port, "/events/concert-1/seats")).GET().build(),
               HttpResponse.BodyHandlers.ofString());
       check(validator, "/events/concert-1/seats", Request.Method.GET, seats);
+      var firstPage =
+          client.send(
+              HttpRequest.newBuilder(uri(port, "/events/concert-1/seats?limit=1")).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      check(validator, "/events/concert-1/seats", Request.Method.GET, firstPage);
+      var pageJson = new com.fasterxml.jackson.databind.ObjectMapper().readTree(firstPage.body());
+      assertEquals(1, pageJson.path("seats").size());
+      var nextPage =
+          client.send(
+              HttpRequest.newBuilder(
+                      uri(
+                          port,
+                          "/events/concert-1/seats?limit=1&cursor="
+                              + pageJson.path("next").asText()))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      check(validator, "/events/concert-1/seats", Request.Method.GET, nextPage);
+      assertEquals(
+          1,
+          new com.fasterxml.jackson.databind.ObjectMapper()
+              .readTree(nextPage.body())
+              .path("seats")
+              .size());
+      var badLimit =
+          client.send(
+              HttpRequest.newBuilder(uri(port, "/events/concert-1/seats?limit=101")).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, badLimit.statusCode());
+      check(validator, "/events/concert-1/seats", Request.Method.GET, badLimit);
       var order =
           HttpRequest.newBuilder(uri(port, "/orders"))
               .header("Content-Type", "application/json")

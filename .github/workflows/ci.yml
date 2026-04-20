@@ -34,3 +34,14 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
           trivyignores: .trivyignore
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: ./mvnw -B -ntp -Pdocker verify

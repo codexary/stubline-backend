@@ -130,9 +130,11 @@ class RawHttpFramingTest {
               .getOutputStream()
               .write(
                   ascii(
-                      "POST /orders HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n"));
+                      "POST /orders HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: 1048577\r\n\r\n"));
+          socket.shutdownOutput();
           Reply reply = readReply(socket.getInputStream());
           assertEquals(413, reply.status());
+          assertTrue(reply.headers().contains("Connection: close"));
           assertTrue(reply.headers().contains("application/problem+json"));
           assertTrue(reply.body().contains("\"status\":413"));
         });

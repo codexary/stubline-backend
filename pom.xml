@@ -102,6 +102,28 @@
         </plugins>
     </build>
 
+    <profiles>
+        <profile>
+            <id>docker</id>
+            <properties>
+                <run.docker>true</run.docker>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <run.docker>true</run.docker>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <licenses>
         <license>
             <name>MIT License</name>
