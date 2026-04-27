@@ -12,6 +12,7 @@
     <modules>
         <module>ticketing-api</module>
         <module>load-generator</module>
+        <module>payment-provider-stub</module>
     </modules>
 
     <properties>
