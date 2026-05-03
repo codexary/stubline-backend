@@ -2,7 +2,7 @@
 
 # Stubline
 
-Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。当前模块化单体的 `ticketing-api` 包含 `catalog`、`inventory`、`orders`、`http`、`health` 包。库存位于内存中，重启后会清空。后续章节才会加入其他功能。
+Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。当前模块化单体的 `ticketing-api` 包含 `catalog`、`inventory`、`orders`、`payments`、`http`、`health` 包。库存位于内存中，重启后会清空。后续章节才会加入其他功能。
 
 ## 构建与测试
 
