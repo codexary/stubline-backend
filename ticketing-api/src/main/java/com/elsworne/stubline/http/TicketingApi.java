@@ -4,6 +4,7 @@ import com.elsworne.stubline.inventory.InMemoryInventory;
 import com.elsworne.stubline.inventory.Seat;
 import com.elsworne.stubline.inventory.SeatInventory;
 import com.elsworne.stubline.orders.Order;
+import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -15,6 +16,7 @@ import java.util.UUID;
 public final class TicketingApi {
   private final ObjectMapper json = new ObjectMapper();
   private final SeatInventory inventory;
+  private final PaymentProviderClient payments;
   private final long lookupDelayMillis;
   private final java.util.concurrent.atomic.AtomicInteger inFlight =
       new java.util.concurrent.atomic.AtomicInteger();
@@ -22,10 +24,16 @@ public final class TicketingApi {
       new java.util.concurrent.atomic.AtomicInteger();
 
   public TicketingApi(SeatInventory inventory) {
-    this(inventory, 0);
+    this(inventory, 0, null);
   }
 
   public TicketingApi(SeatInventory inventory, long lookupDelayMillis) {
+    this(inventory, lookupDelayMillis, null);
+  }
+
+  public TicketingApi(
+      SeatInventory inventory, long lookupDelayMillis, PaymentProviderClient payments) {
+    this.payments = payments;
     if (lookupDelayMillis < 0) throw new IllegalArgumentException("Negative lookup delay");
     this.inventory = inventory;
     this.lookupDelayMillis = lookupDelayMillis;
@@ -54,9 +62,54 @@ public final class TicketingApi {
         }
         return seatPage(request, eventId);
       }
+      if (request.method().equals("GET") && request.path().equals("/diagnostics/runtime")) {
+        long memoryLimit = -1;
+        try {
+          String raw =
+              java.nio.file.Files.readString(java.nio.file.Path.of("/sys/fs/cgroup/memory.max"))
+                  .trim();
+          if (!raw.equals("max")) memoryLimit = Long.parseLong(raw);
+        } catch (IOException | NumberFormatException ignored) {
+        }
+        return HttpReply.json(
+            200,
+            "OK",
+            "{\"availableProcessors\":"
+                + Runtime.getRuntime().availableProcessors()
+                + ",\"maxHeapBytes\":"
+                + Runtime.getRuntime().maxMemory()
+                + ",\"containerMemoryLimitBytes\":"
+                + memoryLimit
+                + "}");
+      }
       if (request.method().equals("GET") && request.path().equals("/diagnostics/thread"))
         return HttpReply.json(
             200, "OK", "{\"virtual\":" + Thread.currentThread().isVirtual() + "}");
+      if (payments != null && request.path().startsWith("/payments/")) {
+        String orderId = request.headers().getOrDefault("x-order-id", "demo");
+        try {
+          String result =
+              request.method().equals("POST") && request.path().equals("/payments/charge")
+                  ? payments.charge(orderId, java.time.Duration.ofSeconds(2))
+                  : request.method().equals("GET")
+                          && request.path().equals("/payments/charge-status")
+                      ? payments.chargeStatus(orderId, java.time.Duration.ofSeconds(2))
+                      : null;
+          if (result == null)
+            return ProblemDetails.of(404, "Not Found", "route not found", request.path());
+          return HttpReply.json(200, "OK", result);
+        } catch (PaymentProviderClient.ProviderRejectedException e) {
+          int status = e.status() == 402 ? 402 : 422;
+          return ProblemDetails.of(
+              status,
+              status == 402 ? "Payment Required" : "Unprocessable Content",
+              status == 402 ? "payment declined" : "provider rejected payment request",
+              request.path());
+        } catch (IOException e) {
+          return ProblemDetails.of(
+              503, "Service Unavailable", "payment provider unavailable", request.path());
+        }
+      }
       if (request.method().equals("POST") && request.path().equals("/orders")) {
         JsonNode body = json.readTree(request.body());
         if (body == null || !body.isObject())

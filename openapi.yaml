@@ -57,6 +57,60 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '431':
           $ref: '#/components/responses/HeadersTooLarge'
+  /payments/charge:
+    post:
+      operationId: chargePaymentProvider
+      summary: Call the configured payment provider
+      parameters:
+        - name: X-Order-Id
+          in: header
+          schema:
+            type: string
+          example: order-1
+      responses:
+        '200':
+          description: Provider response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderStatus'
+              example:
+                status: approved
+        '402':
+          $ref: '#/components/responses/PaymentDeclined'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /payments/charge-status:
+    get:
+      operationId: getChargeStatus
+      summary: Read provider charge status
+      parameters:
+        - name: X-Order-Id
+          in: header
+          schema:
+            type: string
+          example: order-1
+      responses:
+        '200':
+          description: Provider response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderStatus'
+              example:
+                status: approved
+        '402':
+          $ref: '#/components/responses/PaymentDeclined'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /orders:
     post:
       operationId: placeOrder
@@ -94,6 +148,24 @@ paths:
           $ref: '#/components/responses/HeadersTooLarge'
 components:
   responses:
+    PaymentDeclined:
+      description: Provider definitively declined the payment
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unprocessable:
+      description: Provider definitively rejected the payment request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: Payment provider or inventory is unavailable
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     BadRequest:
       description: Invalid JSON or a missing or wrong-typed field
       content:
@@ -151,6 +223,13 @@ components:
             detail: route not found
             instance: /missing
   schemas:
+    ProviderStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: approved
     SeatPage:
       type: object
       required: [seats, next]

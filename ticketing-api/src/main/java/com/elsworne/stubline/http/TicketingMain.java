@@ -1,6 +1,8 @@
 package com.elsworne.stubline.http;
 
 import com.elsworne.stubline.inventory.pg.PostgresInventory;
+import com.elsworne.stubline.payments.PaymentProviderClient;
+import java.net.URI;
 import java.util.concurrent.CountDownLatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,9 +19,18 @@ public final class TicketingMain {
     long lookupDelayMillis = args.length > 4 ? Long.parseLong(args[4]) : 0;
     String jdbcUrl = System.getenv("STUBLINE_JDBC_URL");
     PostgresInventory postgres = null;
+    String providerUrl = System.getenv("STUBLINE_PAYMENT_PROVIDER_URL");
+    PaymentProviderClient payments =
+        providerUrl == null || providerUrl.isBlank()
+            ? null
+            : new PaymentProviderClient(URI.create(providerUrl));
     TicketingApi api;
-    if (jdbcUrl == null || jdbcUrl.isBlank()) api = TicketingApi.sample(lookupDelayMillis);
-    else {
+    if (jdbcUrl == null || jdbcUrl.isBlank()) {
+      var memory = new com.elsworne.stubline.inventory.InMemoryInventory();
+      memory.add(new com.elsworne.stubline.inventory.Seat("A1", "concert-1", true));
+      memory.add(new com.elsworne.stubline.inventory.Seat("A2", "concert-1", true));
+      api = new TicketingApi(memory, lookupDelayMillis, payments);
+    } else {
       postgres =
           new PostgresInventory(
               jdbcUrl,
@@ -29,7 +40,7 @@ public final class TicketingMain {
                   System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
       postgres.add("concert-1", "A1");
       postgres.add("concert-1", "A2");
-      api = new TicketingApi(postgres, lookupDelayMillis);
+      api = new TicketingApi(postgres, lookupDelayMillis, payments);
     }
     ServerExecutor strategy =
         args.length > 2
@@ -55,6 +66,7 @@ public final class TicketingMain {
       } else throw new IllegalArgumentException("Use raw or jdk");
     } finally {
       if (postgres != null) postgres.close();
+      if (payments != null) payments.close();
     }
   }
 

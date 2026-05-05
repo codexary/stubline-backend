@@ -59,8 +59,6 @@ The raw HTTP server assigns one worker to each connection. Choose `THREAD_PER_RE
 
 The load generator prints successful requests per second and p50/p95/p99 latency. Replace `FIXED_POOL` with the other strategies for comparison. Use `loadtest/` for the k6 run. The loopback-only admin listener uses `STUBLINE_ADMIN_PORT` (default `8081`). Its diagnostic route `GET /diagnostics/thread` returns `{"virtual":true}` for virtual workers and `false` for platform workers.
 
-The raw server assigns each worker to a **connection**. Four keep-alive clients can occupy a four-worker pool while other accepted clients starve. Successful-request p95 hides those clients. The Java load generator reports each client's completions and timeouts plus clients with no completions; k6 gives each request 2 seconds and checks the failure rate. The JDK server dispatches each HTTP exchange, letting a worker return between requests.
-
 ## HTTP contract and limits
 
 `openapi.yaml` is the public OpenAPI 3.1 contract. Run `docker run --rm -v "$PWD:/spec" -w /spec redocly/cli:2.64.1@sha256:b9b4585a3bda40f77b58f5fa4535ad5ce7b7d1e4d6f8ed98ebc2c7694dbf3f5b lint openapi.yaml` to lint it. The default Maven build validates real raw and JDK HTTP responses using Atlassian OpenAPI Request Validator 3.0.0, which supports OpenAPI 3.1. Errors use RFC 9457 problem details. The request line and each header line are limited to 8192 bytes, request bodies to 1 MiB, and reads to 5 seconds. Diagnostics are only available on the loopback admin port and are never published by the public listener.
@@ -93,6 +91,10 @@ The raw server's bounded pool assigns a worker to each **connection**. With HTTP
 
 `versionConflicts` counts optimistic updates that lost the version race; `retries` counts the subsequent attempts. Most of 32 buyers may read the seat only after it has sold and return immediately, so even a synchronized start does not imply 31 conflicts.
 
+## Payment provider failures
+
+Start the separate provider with `PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`. In another terminal, set `STUBLINE_PAYMENT_PROVIDER_URL=http://127.0.0.1:8081` when starting `ticketing-api`. `POST /payments/charge` makes one provider call; `GET /payments/charge-status` may retry twice with exponential full-jitter delays. Both use a two-second request deadline, and each call gets only the remaining time. The client logs circuit-breaker state transitions; four failures open it, further calls fail fast, and after three seconds a successful trial closes it. Charging cannot be blindly retried: an uncertain response may follow a completed charge. Safe charge retries require an idempotency key, which is added later. Run `./scripts/payment-breaker-demo.sh` to see 503 responses, fast rejection and eventual 200 recovery.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
@@ -103,6 +105,7 @@ The raw server's bounded pool assigns a worker to each **connection**. With HTTP
 | `STUBLINE_DB_PASSWORD` | PostgreSQL password | None | When JDBC URL is set |
 | `STUBLINE_DB_STRATEGY` | Reservation strategy | `ROW_LOCK` | No |
 | `STUBLINE_DB_NAME` | Compose database name | `stubline` | No |
+| `STUBLINE_PAYMENT_PROVIDER_URL` | Optional payment provider simulator | Disabled | No |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system and SBOM for fixable HIGH and CRITICAL vulnerabilities. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
 

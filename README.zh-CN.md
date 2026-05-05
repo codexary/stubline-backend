@@ -30,8 +30,6 @@ Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、�
 
 在 Linux 的另一个终端运行 `sudo tcpdump -i lo -n -X udp port 9999` 查看 UDP datagram；macOS 用 `-i lo0`。预期看到发往 9999 端口的 UDP 包，包含版本字节、带长度的 UTF-8 instance id、64 位序号和 64 位时间戳。抓包需要相应权限。
 
-原始 server 把 worker 分配给**连接**。四个 keep-alive 客户端可能占满四个 worker，让其他连接饥饿；成功请求的 p95 会漏掉这些客户端。Java 负载生成器输出每个客户端的完成数、超时数和零完成客户端数；k6 给每个请求 2 秒并检查失败率。JDK server 按 HTTP exchange 分派，worker 可在请求之间返回线程池。
-
 ## HTTP 端点
 
 在仓库根目录启动使用 `ServerSocket` 的原始实现：
@@ -90,6 +88,10 @@ docker compose down
 原始 server 的有界线程池把 worker 分配给**连接**。HTTP keep-alive 会使四个 worker 长时间留在四条连接上，其他客户端饥饿；成功请求的 p95 看不出这一点。Java 生成器现输出每个客户端的完成数、超时数以及零完成客户端数；k6 在 2 秒后使请求超时并检查失败率。JDK `HttpServer` 的 executor 分派每个 HTTP exchange，worker 可在请求之间回到线程池。
 
 `versionConflicts` 是因版本不匹配而失败的更新数；`retries` 是其后的重试次数。即使 32 个买家同时开始，多数也可能在座位售出后才读到状态并直接返回，因此不一定有 31 次冲突。
+
+## 支付服务故障
+
+独立启动 provider：`PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`。启动 `ticketing-api` 时设置 `STUBLINE_PAYMENT_PROVIDER_URL=http://127.0.0.1:8081`。`POST /payments/charge` 只调用一次；`GET /payments/charge-status` 可用指数退避和 full jitter 再试两次。二者共用两秒请求 deadline，每次调用只使用剩余预算。客户端记录 circuit breaker 状态变化；四次失败使其打开，此后请求快速失败，三秒后成功的试探请求使其关闭。收费响应不确定时，收费可能已经完成，因此不能盲目重试；安全重试需要后续改动加入的 idempotency key。运行 `./scripts/payment-breaker-demo.sh` 可看到 503、快速拒绝及恢复后的 200。
 
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统和 SBOM，对有修复版本的 HIGH、CRITICAL 漏洞失败。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 
