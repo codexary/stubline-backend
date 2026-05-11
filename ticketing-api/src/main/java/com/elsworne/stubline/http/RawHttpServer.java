@@ -116,7 +116,8 @@ public final class RawHttpServer implements AutoCloseable {
                           requestLine[1].contains("?")
                               ? requestLine[1].substring(requestLine[1].indexOf('?') + 1)
                               : null)),
-              close);
+              close,
+              requestLine[0].equals("HEAD"));
           if (close) return;
         }
       } catch (TooLargeHeadersException e) {
@@ -163,7 +164,12 @@ public final class RawHttpServer implements AutoCloseable {
   }
 
   private static void write(OutputStream out, HttpReply reply, boolean close) throws IOException {
-    String head =
+    write(out, reply, close, false);
+  }
+
+  private static void write(OutputStream out, HttpReply reply, boolean close, boolean head)
+      throws IOException {
+    String responseHead =
         "HTTP/1.1 "
             + reply.status()
             + " "
@@ -178,8 +184,8 @@ public final class RawHttpServer implements AutoCloseable {
             + "Connection: "
             + (close ? "close" : "keep-alive")
             + "\r\n\r\n";
-    out.write(head.getBytes(StandardCharsets.ISO_8859_1));
-    out.write(reply.body());
+    out.write(responseHead.getBytes(StandardCharsets.ISO_8859_1));
+    if (!head) out.write(reply.body());
     out.flush();
   }
 
@@ -187,7 +193,14 @@ public final class RawHttpServer implements AutoCloseable {
   public void close() throws IOException {
     server.close();
     acceptor.shutdownNow();
-    clients.shutdownNow();
+    clients.shutdown();
+    try {
+      if (!clients.awaitTermination(10, java.util.concurrent.TimeUnit.SECONDS))
+        clients.shutdownNow();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      clients.shutdownNow();
+    }
   }
 
   private static final class BadRequestException extends IOException {}

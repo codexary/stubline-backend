@@ -26,9 +26,23 @@ public final class PaymentProviderMain {
         "/health",
         exchange -> {
           try (exchange) {
-            exchange.sendResponseHeaders(200, -1);
+            if (exchange.getRequestMethod().equals("GET")
+                || exchange.getRequestMethod().equals("HEAD")) {
+              exchange.sendResponseHeaders(200, -1);
+            } else {
+              exchange.sendResponseHeaders(405, -1);
+            }
           }
         });
+    for (String path : new String[] {"/health/live", "/health/ready"}) {
+      server.createContext(
+          path,
+          exchange -> {
+            try (exchange) {
+              exchange.sendResponseHeaders(200, -1);
+            }
+          });
+    }
     server.createContext(
         "/admin/outage",
         exchange -> {
@@ -73,6 +87,7 @@ public final class PaymentProviderMain {
     System.out.printf(
         "payment-provider-stub listening=%d latencyMs=%d errorRate=%.2f outage=%b%n",
         port, latency, errorRate, outage.get());
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(10)));
     new CountDownLatch(1).await();
   }
 }

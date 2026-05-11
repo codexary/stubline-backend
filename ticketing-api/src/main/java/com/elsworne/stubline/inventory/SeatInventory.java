@@ -7,5 +7,9 @@ import java.util.List;
 public interface SeatInventory {
   List<Seat> seatsFor(String eventId) throws SQLException;
 
+  default boolean ready() {
+    return true;
+  }
+
   boolean reserve(String eventId, String seatId) throws SQLException;
 }

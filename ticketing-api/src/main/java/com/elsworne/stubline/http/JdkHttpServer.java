@@ -75,8 +75,13 @@ public final class JdkHttpServer implements AutoCloseable {
       exchange
           .getResponseHeaders()
           .putIfAbsent("Content-Type", java.util.List.of("application/json; charset=utf-8"));
-      exchange.sendResponseHeaders(reply.status(), reply.body().length);
-      exchange.getResponseBody().write(reply.body());
+      if (exchange.getRequestMethod().equals("HEAD")) {
+        exchange.getResponseHeaders().set("Content-Length", Integer.toString(reply.body().length));
+        exchange.sendResponseHeaders(reply.status(), -1);
+      } else {
+        exchange.sendResponseHeaders(reply.status(), reply.body().length);
+        exchange.getResponseBody().write(reply.body());
+      }
     }
   }
 
@@ -90,7 +95,14 @@ public final class JdkHttpServer implements AutoCloseable {
 
   @Override
   public void close() {
-    server.stop(0);
-    executor.shutdownNow();
+    server.stop(5);
+    executor.shutdown();
+    try {
+      if (!executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS))
+        executor.shutdownNow();
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      executor.shutdownNow();
+    }
   }
 }

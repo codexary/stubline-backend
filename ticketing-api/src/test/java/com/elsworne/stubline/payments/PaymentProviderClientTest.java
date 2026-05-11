@@ -68,6 +68,7 @@ class PaymentProviderClientTest {
       assertEquals("{\"status\":\"approved\"}", client.charge("x", Duration.ofSeconds(1)));
       assertEquals(
           io.github.resilience4j.circuitbreaker.CircuitBreaker.State.CLOSED, client.state());
+      assertTrue(client.transitions().stream().anyMatch(t -> t.contains("OPEN to HALF_OPEN")));
     }
   }
 

@@ -18,6 +18,7 @@ class HttpServersTest {
     try (var server = new RawHttpServer(0, TicketingApi.sample())) {
       server.start();
       exercise(server.port());
+      healthHead(server.port());
     }
   }
 
@@ -26,6 +27,30 @@ class HttpServersTest {
     try (var server = new JdkHttpServer(0, TicketingApi.sample())) {
       server.start();
       exercise(server.port());
+      healthHead(server.port());
+    }
+  }
+
+  private void healthHead(int port) throws Exception {
+    try (var client = HttpClient.newHttpClient()) {
+      for (String path : new String[] {"/health", "/health/live", "/health/ready"}) {
+        var get =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        var head =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, head.statusCode(), path);
+        assertEquals("", head.body(), path);
+        assertEquals(
+            get.body().getBytes(java.nio.charset.StandardCharsets.UTF_8).length,
+            Integer.parseInt(head.headers().firstValue("Content-Length").orElseThrow()),
+            path);
+      }
     }
   }
 

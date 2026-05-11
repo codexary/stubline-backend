@@ -51,6 +51,15 @@ public final class TicketingApi {
 
   private HttpReply route(HttpRequest request) {
     try {
+      if ((request.method().equals("GET") || request.method().equals("HEAD"))
+          && (request.path().equals("/health") || request.path().equals("/health/live")))
+        return HttpReply.json(200, "OK", "{\"status\":\"ok\"}");
+      if ((request.method().equals("GET") || request.method().equals("HEAD"))
+          && request.path().equals("/health/ready"))
+        return inventory.ready()
+            ? HttpReply.json(200, "OK", "{\"status\":\"ready\"}")
+            : ProblemDetails.of(
+                503, "Service Unavailable", "inventory unavailable", request.path());
       if (request.method().equals("GET") && request.path().matches("/events/[^/]+/seats")) {
         String eventId = request.path().split("/")[2];
         int now = inFlight.incrementAndGet();

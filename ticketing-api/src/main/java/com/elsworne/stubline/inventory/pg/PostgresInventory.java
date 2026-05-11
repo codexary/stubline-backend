@@ -135,6 +135,15 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
   }
 
   @Override
+  public boolean ready() {
+    try (var connection = pool.getConnection()) {
+      return connection.isValid(2);
+    } catch (SQLException e) {
+      return false;
+    }
+  }
+
+  @Override
   public void close() {
     pool.close();
   }

@@ -95,6 +95,10 @@ The raw server's bounded pool assigns a worker to each **connection**. With HTTP
 
 Start the separate provider with `PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`. In another terminal, set `STUBLINE_PAYMENT_PROVIDER_URL=http://127.0.0.1:8081` when starting `ticketing-api`. `POST /payments/charge` makes one provider call; `GET /payments/charge-status` may retry twice with exponential full-jitter delays. Both use a two-second request deadline, and each call gets only the remaining time. The client logs circuit-breaker state transitions; four failures open it, further calls fail fast, and after three seconds a successful trial closes it. Charging cannot be blindly retried: an uncertain response may follow a completed charge. Safe charge retries require an idempotency key, which is added later. Run `./scripts/payment-breaker-demo.sh` to see 503 responses, fast rejection and eventual 200 recovery.
 
+## Processes in containers
+
+Build and start the three services with `docker compose up --build -d --wait`; stop with `docker compose down`. The two Java images use multi-stage builds and a pinned Eclipse Temurin 21 JRE, run as UID 10001, and set `-XX:MaxRAMPercentage=60`. Compose sets CPU and memory limits and checks `/health`. Inspect use with `docker stats`, `docker compose exec -T ticketing-api wget -qO- http://127.0.0.1:8081/diagnostics/runtime`, and `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max`. The endpoint reports `availableProcessors`, `maxHeapBytes`, and `containerMemoryLimitBytes` (`-1` when the cgroup file is unavailable or unlimited). BuildKit caches the Maven wrapper and dependencies under `/root/.m2`; copying POMs before sources keeps dependency resolution reusable when Java code changes. This speeds repeated builds, reduces downloads, and lowers CI cost.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
@@ -107,9 +111,11 @@ Start the separate provider with `PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.
 | `STUBLINE_DB_NAME` | Compose database name | `stubline` | No |
 | `STUBLINE_PAYMENT_PROVIDER_URL` | Optional payment provider simulator | Disabled | No |
 
-Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system and SBOM for fixable HIGH and CRITICAL vulnerabilities. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
+Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system, SBOM, and locally built Compose images for fixable HIGH and CRITICAL vulnerabilities using `.trivyignore`. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
 
 Seat listing accepts `limit` (1–100, default 20) and an opaque `cursor`; the response has `seats` and `next`. Supply `next` as the next request's `cursor`. Copy `.env.example` to `.env` for local PostgreSQL use. Compose reads its database credentials from that file; the application stops at startup with a named error if PostgreSQL is enabled without credentials.
+
+Since container resource limits were introduced, Compose probes `/health/ready`; `/health/live` reports process liveness, while readiness checks the local PostgreSQL connection without querying the payment provider. `/health` remains an alias for earlier scripts. Containers emit JSON log lines with `timestamp`, `level`, `service`, `logger`, `message` and MDC fields; local Maven runs retain readable logs. SIGTERM closes listeners and allows up to ten seconds for active requests, matching the 15-second Compose grace period.
 
 ## License
 

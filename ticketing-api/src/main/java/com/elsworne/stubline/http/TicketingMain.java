@@ -50,16 +50,27 @@ public final class TicketingMain {
     int adminPort = Integer.parseInt(System.getenv().getOrDefault("STUBLINE_ADMIN_PORT", "8081"));
     try (var admin = new AdminHttpServer(adminPort, api, strategy, poolSize)) {
       admin.start();
+      Runtime.getRuntime().addShutdownHook(new Thread(admin::close));
       LOG.info("Admin HTTP server listening on loopback port {}", admin.port());
       if (mode.equals("raw")) {
         try (var server = new RawHttpServer(port, api, strategy, poolSize)) {
           server.start();
+          Runtime.getRuntime()
+              .addShutdownHook(
+                  new Thread(
+                      () -> {
+                        try {
+                          server.close();
+                        } catch (Exception ignored) {
+                        }
+                      }));
           LOG.info("Raw HTTP server listening on {}", server.port());
           new CountDownLatch(1).await();
         }
       } else if (mode.equals("jdk")) {
         try (var server = new JdkHttpServer(port, api, strategy, poolSize)) {
           server.start();
+          Runtime.getRuntime().addShutdownHook(new Thread(server::close));
           LOG.info("JDK HTTP server listening on {} with {}", server.port(), strategy);
           new CountDownLatch(1).await();
         }

@@ -86,6 +86,14 @@ final class OpenApiContractTest {
     var validator =
         OpenApiInteractionValidator.createFor(Path.of("..", "openapi.yaml").toString()).build();
     try (var client = HttpClient.newHttpClient()) {
+      for (String path : new String[] {"/health/live", "/health/ready"}) {
+        var health =
+            client.send(
+                HttpRequest.newBuilder(uri(port, path)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, health.statusCode());
+        check(validator, path, Request.Method.GET, health);
+      }
       var seats =
           client.send(
               HttpRequest.newBuilder(uri(port, "/events/concert-1/seats")).GET().build(),

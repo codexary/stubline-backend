@@ -31,6 +31,8 @@ public final class PaymentProviderClient implements AutoCloseable {
   private final DoubleSupplier random;
   private final long baseBackoffMillis;
   private final java.util.function.LongConsumer sleeper;
+  private final java.util.List<String> transitions =
+      new java.util.concurrent.CopyOnWriteArrayList<>();
 
   public PaymentProviderClient(URI base) {
     this(base, ThreadLocalRandom.current()::nextDouble, 100, Duration.ofSeconds(3));
@@ -80,11 +82,18 @@ public final class PaymentProviderClient implements AutoCloseable {
     breaker
         .getEventPublisher()
         .onStateTransition(
-            event -> LOG.info("Payment provider breaker {}", event.getStateTransition()));
+            event -> {
+              transitions.add(event.getStateTransition().toString());
+              LOG.info("Payment provider breaker {}", event.getStateTransition());
+            });
   }
 
   public CircuitBreaker.State state() {
     return breaker.getState();
+  }
+
+  public java.util.List<String> transitions() {
+    return java.util.List.copyOf(transitions);
   }
 
   public String charge(String orderId, Duration budget) throws IOException, InterruptedException {

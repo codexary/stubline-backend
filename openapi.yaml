@@ -10,6 +10,35 @@ security: []
 servers:
   - url: http://localhost:18080
 paths:
+  /health:
+    get:
+      operationId: healthAlias
+      summary: Process liveness alias
+      responses:
+        '200':
+          $ref: '#/components/responses/Healthy'
+        '400':
+          description: Malformed request
+  /health/live:
+    get:
+      operationId: live
+      summary: Process can serve requests
+      responses:
+        '200':
+          $ref: '#/components/responses/Healthy'
+        '400':
+          description: Malformed request
+  /health/ready:
+    get:
+      operationId: ready
+      summary: Local dependencies are reachable
+      responses:
+        '200':
+          $ref: '#/components/responses/Healthy'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '400':
+          description: Malformed request
   /events/{eventId}/seats:
     get:
       operationId: listEventSeats
@@ -160,6 +189,18 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    Healthy:
+      description: Process or local dependencies are healthy
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+          example:
+            status: ok
     Unavailable:
       description: Payment provider or inventory is unavailable
       content:
