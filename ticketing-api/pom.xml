@@ -70,6 +70,11 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>com.google.protobuf</groupId>
+            <artifactId>protobuf-java</artifactId>
+            <version>4.36.2</version>
+        </dependency>
+        <dependency>
             <groupId>com.atlassian.oai</groupId>
             <artifactId>openapi-request-validator-core</artifactId>
             <version>3.0.0</version>
@@ -81,4 +86,26 @@
             <version>8.1</version>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.github.ascopes</groupId>
+                <artifactId>protobuf-maven-plugin</artifactId>
+                <version>5.1.11</version>
+                <configuration>
+                    <protoc kind="binary-maven">
+                        <version>4.36.2</version>
+                    </protoc>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>generate</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

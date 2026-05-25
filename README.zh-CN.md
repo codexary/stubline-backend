@@ -97,6 +97,12 @@ docker compose down
 
 运行 `docker compose up --build -d --wait` 构建并启动三个服务，运行 `docker compose down` 停止。两个 Java 镜像采用多阶段构建和固定版本的 Eclipse Temurin 21 JRE，以 UID 10001 运行，并设置 `-XX:MaxRAMPercentage=60`。Compose 设置 CPU 和内存限制并检查 `/health`。使用 `docker stats`、`docker compose exec -T ticketing-api wget -qO- http://127.0.0.1:8081/diagnostics/runtime` 和 `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max` 查看限制。端点输出 `availableProcessors`、`maxHeapBytes` 和 `containerMemoryLimitBytes`（cgroup 文件不可用或无限制时为 `-1`）。 BuildKit 在 `/root/.m2` 缓存 Maven wrapper 和依赖；先复制 POM 再复制源码，让 Java 代码变更时仍可复用依赖解析层。这能加快重复构建、减少下载并降低 CI 成本。
 
+## 订单事件格式
+
+`OrderPlaced` 的共同 schema 在 `ticketing-api/src/main/protobuf/order_placed.proto`，Java 模型通过 `EventCodec` 支持两种编码。字段包括订单、活动和座位 ID，买家，最小货币单位的金额，币种，时间戳，以及可选的买家备注。运行 `./mvnw -q -pl ticketing-api -am package`，然后运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain`，可打印两种大小、Protobuf 十六进制字节和字段 tag。`0a`、`12`、`1a`、`22`、`28`、`32`、`3a` 对应字段 1–7；出现可选字段 8 时为 `42`。已删除的字段 9 和旧名称 `legacy_source` 被 reserved，不能重用。
+
+当团队需要直接查看消息，且能接受较大的文本及字段名耦合时，JSON 合适。Jackson 易于调试，无需生成代码；但改名会破坏旧消费者，除非提供别名或迁移。我们明确关闭 `FAIL_ON_UNKNOWN_PROPERTIES`，让旧消费者忽略新字段；缺少原有必需字段仍会被拒绝。高吞吐或跨语言消息适合 Protobuf：字节更少，数字字段 ID 稳定，兼容规则明确。团队需要维护固定版本的 `protoc` 构建步骤、生成代码、schema 审查，并绝不重用已删除的字段号。生产者和消费者从同一份提交的 `.proto` 合约构建。
+
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 
 座位列表支持 `limit`（1–100，默认 20）和不透明 `cursor`；响应包含 `seats` 与 `next`。本地 PostgreSQL 配置见 `.env.example`，复制为 `.env`；启用数据库时必须提供用户和密码。

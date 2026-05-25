@@ -11,6 +11,12 @@ servers:
   - url: http://localhost:18080
 paths:
   /health:
+    head:
+      operationId: headHealthAlias
+      summary: Process liveness headers
+      responses:
+        '200':
+          description: Process is live; no response body.
     get:
       operationId: healthAlias
       summary: Process liveness alias

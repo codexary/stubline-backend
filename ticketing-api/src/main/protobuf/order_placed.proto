@@ -1,0 +1,17 @@
+syntax = "proto3";
+package stubline.events.v1;
+option java_package = "com.elsworne.stubline.orders.events.proto";
+option java_outer_classname = "OrderPlacedSchema";
+
+message OrderPlaced {
+  string order_id = 1;
+  string event_id = 2;
+  string seat_id = 3;
+  string buyer = 4;
+  optional int64 amount_minor = 5;
+  string currency = 6;
+  string occurred_at = 7;
+  optional string buyer_note = 8;
+  reserved 9;
+  reserved "legacy_source";
+}

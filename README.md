@@ -99,6 +99,12 @@ Start the separate provider with `PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.
 
 Build and start the three services with `docker compose up --build -d --wait`; stop with `docker compose down`. The two Java images use multi-stage builds and a pinned Eclipse Temurin 21 JRE, run as UID 10001, and set `-XX:MaxRAMPercentage=60`. Compose sets CPU and memory limits and checks `/health`. Inspect use with `docker stats`, `docker compose exec -T ticketing-api wget -qO- http://127.0.0.1:8081/diagnostics/runtime`, and `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max`. The endpoint reports `availableProcessors`, `maxHeapBytes`, and `containerMemoryLimitBytes` (`-1` when the cgroup file is unavailable or unlimited). BuildKit caches the Maven wrapper and dependencies under `/root/.m2`; copying POMs before sources keeps dependency resolution reusable when Java code changes. This speeds repeated builds, reduces downloads, and lowers CI cost.
 
+## Order event formats
+
+`OrderPlaced` lives in `ticketing-api/src/main/protobuf/order_placed.proto` and has one Java model behind `EventCodec`. It carries the order, event and seat IDs, buyer, amount in minor units, currency, timestamp, and an optional buyer note. Run `./mvnw -q -pl ticketing-api -am package` then `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain` to print the JSON and Protobuf sizes, the Protobuf hex bytes, and each field tag. In the hex stream, tags `0a`, `12`, `1a`, `22`, `28`, `32`, and `3a` identify fields 1–7; `42` identifies optional field 8 when present. Field 9 and its old name `legacy_source` are reserved and cannot be reused.
+
+JSON fits when humans inspect messages and consumers can tolerate its larger text payload and field-name coupling. Jackson is easy to debug and needs no code generation, but renaming a field breaks old consumers unless an alias or migration is provided. `FAIL_ON_UNKNOWN_PROPERTIES` is deliberately off so an old consumer can read an event with a newly added field; missing established fields are still rejected. Protobuf fits high-volume or cross-language messaging with a shared schema: smaller bytes, stable numeric field IDs, and explicit compatibility rules. It costs the team a pinned `protoc` build step, generated code, schema review, and discipline never to reuse removed field numbers. Producers and consumers must build from the same committed `.proto` contract.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
