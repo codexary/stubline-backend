@@ -5,6 +5,8 @@ import com.elsworne.stubline.inventory.Seat;
 import com.elsworne.stubline.inventory.SeatInventory;
 import com.elsworne.stubline.orders.Order;
 import com.elsworne.stubline.payments.PaymentProviderClient;
+import com.elsworne.stubline.payments.PaymentProviderStub;
+import com.elsworne.stubline.payments.PaymentService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -17,6 +19,7 @@ public final class TicketingApi {
   private final ObjectMapper json = new ObjectMapper();
   private final SeatInventory inventory;
   private final PaymentProviderClient payments;
+  private final PaymentService paymentService;
   private final long lookupDelayMillis;
   private final java.util.concurrent.atomic.AtomicInteger inFlight =
       new java.util.concurrent.atomic.AtomicInteger();
@@ -34,9 +37,29 @@ public final class TicketingApi {
   public TicketingApi(
       SeatInventory inventory, long lookupDelayMillis, PaymentProviderClient payments) {
     this.payments = payments;
+    this.paymentService = null;
     if (lookupDelayMillis < 0) throw new IllegalArgumentException("Negative lookup delay");
     this.inventory = inventory;
     this.lookupDelayMillis = lookupDelayMillis;
+  }
+
+  public TicketingApi(
+      SeatInventory inventory,
+      long lookupDelayMillis,
+      PaymentProviderClient payments,
+      PaymentService paymentService) {
+    if (lookupDelayMillis < 0) throw new IllegalArgumentException("Negative lookup delay");
+    this.inventory = inventory;
+    this.lookupDelayMillis = lookupDelayMillis;
+    this.payments = payments;
+    this.paymentService = paymentService;
+  }
+
+  public TicketingApi(SeatInventory inventory, PaymentService paymentService) {
+    this.inventory = inventory;
+    this.lookupDelayMillis = 0;
+    this.payments = null;
+    this.paymentService = paymentService;
   }
 
   public HttpReply handle(HttpRequest request) {
@@ -94,6 +117,21 @@ public final class TicketingApi {
       if (request.method().equals("GET") && request.path().equals("/diagnostics/thread"))
         return HttpReply.json(
             200, "OK", "{\"virtual\":" + Thread.currentThread().isVirtual() + "}");
+      if (paymentService != null
+          && request.method().equals("POST")
+          && request.path().equals("/payments")) {
+        try {
+          return paymentService.pay(request.headers().get("idempotency-key"), request.body());
+        } catch (PaymentProviderStub.ChargeNotMadeException e) {
+          return HttpReply.json(402, "Payment Required", "{\"error\":\"payment declined\"}");
+        } catch (IllegalArgumentException e) {
+          return HttpReply.json(
+              422, "Unprocessable Content", "{\"error\":\"key reused with different payment\"}");
+        } catch (IllegalStateException e) {
+          return HttpReply.json(
+              503, "Service Unavailable", "{\"error\":\"payment outcome unknown\"}");
+        }
+      }
       if (payments != null && request.path().startsWith("/payments/")) {
         String orderId = request.headers().getOrDefault("x-order-id", "demo");
         try {

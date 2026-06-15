@@ -92,6 +92,62 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '431':
           $ref: '#/components/responses/HeadersTooLarge'
+  /payments:
+    post:
+      operationId: createPayment
+      summary: Charge a payment with a 24-hour idempotency key
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 255
+          example: cart-1-attempt-1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amountCents]
+              properties:
+                orderId:
+                  type: string
+                amountCents:
+                  type: integer
+                  minimum: 1
+            example:
+              orderId: order-1
+              amountCents: 1500
+      responses:
+        '201':
+          description: Payment accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chargeId, orderId, amountCents]
+                properties:
+                  chargeId: {type: string}
+                  orderId: {type: string}
+                  amountCents: {type: integer}
+              example:
+                chargeId: charge-1
+                orderId: order-1
+                amountCents: 1500
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '402':
+          $ref: '#/components/responses/PaymentDeclined'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /payments/charge:
     post:
       operationId: chargePaymentProvider
@@ -190,7 +246,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Unprocessable:
-      description: Provider definitively rejected the payment request
+      description: Provider rejected the request or idempotency key was reused with another body
       content:
         application/problem+json:
           schema:

@@ -32,6 +32,10 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
     this.strategy = strategy;
   }
 
+  public javax.sql.DataSource dataSource() {
+    return pool;
+  }
+
   public void add(String eventId, String seatId) throws SQLException {
     try (var connection = pool.getConnection();
         var insert =

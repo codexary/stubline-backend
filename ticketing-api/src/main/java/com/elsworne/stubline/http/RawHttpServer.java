@@ -169,6 +169,7 @@ public final class RawHttpServer implements AutoCloseable {
 
   private static void write(OutputStream out, HttpReply reply, boolean close, boolean head)
       throws IOException {
+    reply = ProblemDetails.normalize(reply, "/");
     String responseHead =
         "HTTP/1.1 "
             + reply.status()

@@ -99,9 +99,17 @@ docker compose down
 
 ## 订单事件格式
 
-`OrderPlaced` 的共同 schema 在 `ticketing-api/src/main/protobuf/order_placed.proto`，Java 模型通过 `EventCodec` 支持两种编码。字段包括订单、活动和座位 ID，买家，最小货币单位的金额，币种，时间戳，以及可选的买家备注。运行 `./mvnw -q -pl ticketing-api -am package`，然后运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain`，可打印两种大小、Protobuf 十六进制字节和字段 tag。`0a`、`12`、`1a`、`22`、`28`、`32`、`3a` 对应字段 1–7；出现可选字段 8 时为 `42`。已删除的字段 9 和旧名称 `legacy_source` 被 reserved，不能重用。
+`OrderPlaced` 的共同 schema 在 `ticketing-api/src/main/protobuf/order_placed.proto`，Java 模型通过 `EventCodec` 支持两种编码。字段包括订单、活动和座位 ID，买家，最小货币单位的金额，币种，时间戳，以及可选的买家备注。运行 `./mvnw -q -pl ticketing-api -am package`，然后运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain`，可打印两种大小、Protobuf 十六进制字节和字段 tag。固定样例的第一行是 `json=175 bytes protobuf=73 bytes`。`0a`、`12`、`1a`、`22`、`28`、`32`、`3a` 对应字段 1–7；出现可选字段 8 时为 `42`。已删除的字段 9 和旧名称 `legacy_source` 被 reserved，不能重用。
 
 当团队需要直接查看消息，且能接受较大的文本及字段名耦合时，JSON 合适。Jackson 易于调试，无需生成代码；但改名会破坏旧消费者，除非提供别名或迁移。我们明确关闭 `FAIL_ON_UNKNOWN_PROPERTIES`，让旧消费者忽略新字段；缺少原有必需字段仍会被拒绝。高吞吐或跨语言消息适合 Protobuf：字节更少，数字字段 ID 稳定，兼容规则明确。团队需要维护固定版本的 `protoc` 构建步骤、生成代码、schema 审查，并绝不重用已删除的字段号。生产者和消费者从同一份提交的 `.proto` 合约构建。
+
+## 带 key 的支付
+
+设置 `STUBLINE_PAYMENT_PROVIDER_URL` 为 provider 地址，向 `POST /payments` 发送 `Idempotency-Key` 和 JSON，例如 `{"orderId":"order-1","amountCents":2500}`。首次返回 201；同一个 key 和完全相同的请求体重放已保存的响应，不会再扣款；请求体不同返回 422；首次请求进行中时重试返回 409。provider 在资金移动前明确拒绝时，释放 key 供后续尝试使用。结果不明时保留 in-flight 记录，以便核对。完成的记录 24 小时后过期；进行中的记录不会自动过期。Flyway `V2` 迁移保存唯一 key、SHA-256 请求体哈希、状态、过期时间和响应。PostgreSQL 模式复用 现有的 Hikari 连接池；否则使用内存存储。
+
+同一个 key 会传给 provider 的 `POST /payments`。其独立的扣款映射对重复 key 返回原扣款，对不同金额拒绝。最初的 `/payments/charge` 仍只调用 provider **一次**，不会自动重试：超时后的结果可能未知。现在客户端使用**同一个 idempotency key** 发起新尝试是安全的，因为两层都去重。无 key 扣款不可自动重试的理由见 [超时及 circuit breaker 说明](#支付服务故障)。
+
+运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.payments.LostReplyClient`。预期包含 `First reply timed out`、`Retry status: 201`、`Provider charges: 1`；两次尝试之间 API 以空的本地存储重启。HTTP 集成测试还会针对 支付方 的真实 keyed endpoint 验证这一情形。PostgreSQL 存储合约运行 `./mvnw -q -Pdocker verify`。
 
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 

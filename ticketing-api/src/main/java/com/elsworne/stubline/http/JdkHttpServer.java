@@ -71,6 +71,7 @@ public final class JdkHttpServer implements AutoCloseable {
                       body,
                       exchange.getRequestURI().getRawQuery()));
       }
+      reply = ProblemDetails.normalize(reply, exchange.getRequestURI().getPath());
       reply.headers().forEach((key, value) -> exchange.getResponseHeaders().set(key, value));
       exchange
           .getResponseHeaders()

@@ -9,8 +9,8 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-pro
 COPY ticketing-api ticketing-api
 COPY load-generator load-generator
 COPY payment-provider-stub payment-provider-stub
-RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-provider-stub -am -DskipTests package && \
-    ./mvnw -q -pl payment-provider-stub org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency
+RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-provider-stub -am -DskipTests install && \
+    ./mvnw -q -pl payment-provider-stub -am org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency
 
 FROM eclipse-temurin:21.0.12.1_1-jre-noble
 RUN useradd --system --uid 10001 --create-home app

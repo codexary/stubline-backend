@@ -33,4 +33,17 @@ public final class ProblemDetails {
       throw new IllegalStateException(e);
     }
   }
+
+  public static HttpReply normalize(HttpReply reply, String instance) {
+    if (reply.status() < 400
+        || "application/problem+json".equals(reply.headers().get("Content-Type"))) return reply;
+    String detail = reply.reason();
+    try {
+      var node = JSON.readTree(reply.body());
+      if (node != null && node.path("error").isTextual()) detail = node.path("error").asText();
+    } catch (Exception ignored) {
+      // A transport error may not have a JSON body.
+    }
+    return of(reply.status(), reply.reason(), detail, instance);
+  }
 }

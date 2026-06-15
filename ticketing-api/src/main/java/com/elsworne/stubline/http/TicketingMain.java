@@ -1,8 +1,12 @@
 package com.elsworne.stubline.http;
 
 import com.elsworne.stubline.inventory.pg.PostgresInventory;
+import com.elsworne.stubline.payments.InMemoryIdempotencyStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
+import com.elsworne.stubline.payments.PaymentService;
+import com.elsworne.stubline.payments.PostgresIdempotencyStore;
 import java.net.URI;
+import java.time.Clock;
 import java.util.concurrent.CountDownLatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,11 +29,16 @@ public final class TicketingMain {
             ? null
             : new PaymentProviderClient(URI.create(providerUrl));
     TicketingApi api;
+    Clock clock = Clock.systemUTC();
     if (jdbcUrl == null || jdbcUrl.isBlank()) {
       var memory = new com.elsworne.stubline.inventory.InMemoryInventory();
       memory.add(new com.elsworne.stubline.inventory.Seat("A1", "concert-1", true));
       memory.add(new com.elsworne.stubline.inventory.Seat("A2", "concert-1", true));
-      api = new TicketingApi(memory, lookupDelayMillis, payments);
+      PaymentService service =
+          payments == null
+              ? null
+              : new PaymentService(new InMemoryIdempotencyStore(clock), payments, clock);
+      api = new TicketingApi(memory, lookupDelayMillis, payments, service);
     } else {
       postgres =
           new PostgresInventory(
@@ -40,7 +49,12 @@ public final class TicketingMain {
                   System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
       postgres.add("concert-1", "A1");
       postgres.add("concert-1", "A2");
-      api = new TicketingApi(postgres, lookupDelayMillis, payments);
+      PaymentService service =
+          payments == null
+              ? null
+              : new PaymentService(
+                  new PostgresIdempotencyStore(postgres.dataSource(), clock), payments, clock);
+      api = new TicketingApi(postgres, lookupDelayMillis, payments, service);
     }
     ServerExecutor strategy =
         args.length > 2

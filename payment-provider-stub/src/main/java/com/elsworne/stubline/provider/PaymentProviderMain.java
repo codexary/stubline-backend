@@ -61,6 +61,20 @@ public final class PaymentProviderMain {
             exchange.sendResponseHeaders(204, -1);
           }
         });
+    var charges =
+        new ProviderCharges(
+            Long.parseLong(System.getenv().getOrDefault("PROVIDER_PAYMENT_REPLY_DELAY_MS", "0")));
+    server.createContext(
+        "/admin/charges",
+        exchange -> {
+          try (exchange) {
+            byte[] body =
+                ("{\"charges\":" + charges.count() + "}").getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+          }
+        });
+    server.createContext("/payments", charges::handle);
     for (String path : new String[] {"/charge", "/charge-status"}) {
       server.createContext(
           path,

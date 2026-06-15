@@ -211,4 +211,50 @@ class PaymentProviderClientTest {
       assertEquals(0, server.calls());
     }
   }
+
+  @Test
+  void keyedChargeSerializesOrderIdAsJson() throws Exception {
+    var seen = new java.util.concurrent.atomic.AtomicReference<String>();
+    var server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+    server.createContext(
+        "/payments",
+        exchange -> {
+          seen.set(
+              new String(
+                  exchange.getRequestBody().readAllBytes(),
+                  java.nio.charset.StandardCharsets.UTF_8));
+          byte[] body = "{\"chargeId\":\"c1\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          exchange.sendResponseHeaders(201, body.length);
+          try (exchange) {
+            exchange.getResponseBody().write(body);
+          }
+        });
+    server.start();
+    try (var client =
+        new PaymentProviderClient(
+            URI.create("http://localhost:" + server.getAddress().getPort()))) {
+      assertEquals("c1", client.charge("key", "a\"b\\c", 500));
+      assertEquals(
+          "a\"b\\c",
+          new com.fasterxml.jackson.databind.ObjectMapper()
+              .readTree(seen.get())
+              .path("orderId")
+              .asText());
+    } finally {
+      server.stop(0);
+    }
+  }
+
+  @Test
+  void keyedChargeTreatsOtherProvider4xxAsDefiniteFailure() throws Exception {
+    try (var server = stub(0, 409);
+        var client = new PaymentProviderClient(server.uri())) {
+      var rejection =
+          assertThrows(
+              PaymentProviderStub.ChargeNotMadeException.class,
+              () -> client.charge("key", "order", 500));
+      assertTrue(rejection.getMessage().contains("HTTP 409"));
+      assertEquals(1, server.calls());
+    }
+  }
 }
