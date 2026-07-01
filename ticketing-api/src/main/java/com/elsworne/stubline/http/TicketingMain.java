@@ -1,12 +1,14 @@
 package com.elsworne.stubline.http;
 
-import com.elsworne.stubline.inventory.pg.PostgresInventory;
+import com.elsworne.stubline.inventory.GrpcInventoryClient;
 import com.elsworne.stubline.payments.InMemoryIdempotencyStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.elsworne.stubline.payments.PaymentService;
 import com.elsworne.stubline.payments.PostgresIdempotencyStore;
+import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.net.URI;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,40 +24,29 @@ public final class TicketingMain {
     int port = args.length > 1 ? Integer.parseInt(args[1]) : 8080;
     long lookupDelayMillis = args.length > 4 ? Long.parseLong(args[4]) : 0;
     String jdbcUrl = System.getenv("STUBLINE_JDBC_URL");
-    PostgresInventory postgres = null;
     String providerUrl = System.getenv("STUBLINE_PAYMENT_PROVIDER_URL");
     PaymentProviderClient payments =
         providerUrl == null || providerUrl.isBlank()
             ? null
             : new PaymentProviderClient(URI.create(providerUrl));
-    TicketingApi api;
+    String target = System.getenv().getOrDefault("STUBLINE_INVENTORY_TARGET", "localhost:9090");
+    GrpcInventoryClient inventory =
+        new GrpcInventoryClient(
+            NettyChannelBuilder.forTarget(target).usePlaintext().build(), Duration.ofSeconds(2));
     Clock clock = Clock.systemUTC();
-    if (jdbcUrl == null || jdbcUrl.isBlank()) {
-      var memory = new com.elsworne.stubline.inventory.InMemoryInventory();
-      memory.add(new com.elsworne.stubline.inventory.Seat("A1", "concert-1", true));
-      memory.add(new com.elsworne.stubline.inventory.Seat("A2", "concert-1", true));
-      PaymentService service =
-          payments == null
-              ? null
-              : new PaymentService(new InMemoryIdempotencyStore(clock), payments, clock);
-      api = new TicketingApi(memory, lookupDelayMillis, payments, service);
-    } else {
-      postgres =
-          new PostgresInventory(
-              jdbcUrl,
-              requireEnv("STUBLINE_DB_USER"),
-              requireEnv("STUBLINE_DB_PASSWORD"),
-              PostgresInventory.Strategy.valueOf(
-                  System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
-      postgres.add("concert-1", "A1");
-      postgres.add("concert-1", "A2");
-      PaymentService service =
-          payments == null
-              ? null
-              : new PaymentService(
-                  new PostgresIdempotencyStore(postgres.dataSource(), clock), payments, clock);
-      api = new TicketingApi(postgres, lookupDelayMillis, payments, service);
-    }
+    PostgresIdempotencyStore postgresPayments =
+        jdbcUrl == null || jdbcUrl.isBlank()
+            ? null
+            : new PostgresIdempotencyStore(
+                jdbcUrl, requireEnv("STUBLINE_DB_USER"), requireEnv("STUBLINE_DB_PASSWORD"), clock);
+    PaymentService service =
+        payments == null
+            ? null
+            : new PaymentService(
+                postgresPayments == null ? new InMemoryIdempotencyStore(clock) : postgresPayments,
+                payments,
+                clock);
+    TicketingApi api = new TicketingApi(inventory, lookupDelayMillis, payments, service);
     ServerExecutor strategy =
         args.length > 2
             ? ServerExecutor.valueOf(args[2].toUpperCase(java.util.Locale.ROOT))
@@ -90,7 +81,8 @@ public final class TicketingMain {
         }
       } else throw new IllegalArgumentException("Use raw or jdk");
     } finally {
-      if (postgres != null) postgres.close();
+      inventory.close();
+      if (postgresPayments != null) postgresPayments.close();
       if (payments != null) payments.close();
     }
   }

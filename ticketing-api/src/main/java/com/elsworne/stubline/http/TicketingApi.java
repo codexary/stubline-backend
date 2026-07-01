@@ -79,7 +79,7 @@ public final class TicketingApi {
         return HttpReply.json(200, "OK", "{\"status\":\"ok\"}");
       if ((request.method().equals("GET") || request.method().equals("HEAD"))
           && request.path().equals("/health/ready"))
-        return inventory.ready()
+        return inventory.ready() && (paymentService == null || paymentService.ready())
             ? HttpReply.json(200, "OK", "{\"status\":\"ready\"}")
             : ProblemDetails.of(
                 503, "Service Unavailable", "inventory unavailable", request.path());
@@ -190,6 +190,17 @@ public final class TicketingApi {
                     order.createdAt().toString())));
       }
       return ProblemDetails.of(404, "Not Found", "route not found", request.path());
+    } catch (io.grpc.StatusRuntimeException e) {
+      return switch (e.getStatus().getCode()) {
+        case NOT_FOUND -> ProblemDetails.of(404, "Not Found", "seat not found", request.path());
+        case FAILED_PRECONDITION ->
+            ProblemDetails.of(409, "Conflict", "seat unavailable", request.path());
+        case DEADLINE_EXCEEDED ->
+            ProblemDetails.of(
+                504, "Gateway Timeout", "inventory deadline exceeded", request.path());
+        default ->
+            ProblemDetails.of(503, "Service Unavailable", "inventory unavailable", request.path());
+      };
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return ProblemDetails.of(503, "Service Unavailable", "interrupted", request.path());

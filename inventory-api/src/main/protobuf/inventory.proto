@@ -1,0 +1,10 @@
+syntax = "proto3";
+package stubline.inventory.v1;
+option java_package = "com.elsworne.stubline.inventory.grpc";
+option java_multiple_files = true;
+service Inventory { rpc ListSeats (ListSeatsRequest) returns (ListSeatsReply); rpc Reserve (ReserveRequest) returns (ReserveReply); }
+message ListSeatsRequest { string event_id = 1; }
+message SeatState { string id = 1; string event_id = 2; bool available = 3; }
+message ListSeatsReply { repeated SeatState seats = 1; }
+message ReserveRequest { string event_id = 1; string seat_id = 2; }
+message ReserveReply { string event_id = 1; string seat_id = 2; }

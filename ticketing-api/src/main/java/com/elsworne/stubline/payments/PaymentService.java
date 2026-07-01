@@ -25,6 +25,10 @@ public final class PaymentService {
     this.clock = Objects.requireNonNull(clock);
   }
 
+  public boolean ready() {
+    return store.ready();
+  }
+
   public HttpReply pay(String key, byte[] body) {
     if (key == null || key.isBlank() || key.length() > 255)
       return HttpReply.json(

@@ -2,7 +2,7 @@
 
 # Stubline
 
-Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。当前模块化单体的 `ticketing-api` 包含 `catalog`、`inventory`、`orders`、`payments`、`http`、`health` 包。库存位于内存中，重启后会清空。后续章节才会加入其他功能。
+Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。当前版本包含 `ticketing-api` 和由 PostgreSQL 支持的 gRPC `inventory-service`。通知暂时仍留在 API 进程中。
 
 ## 构建与测试
 
@@ -66,18 +66,18 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 ```sh
 ./mvnw -q verify
 ./mvnw -q -Pdocker verify
-docker compose up -d postgres
+docker compose up --build -d --wait inventory-service
 ```
 
 默认验证运行受控的内存竞态测试，跳过标记为 `docker` 的 PostgreSQL 测试。在可用 Docker 的环境中，`-Pdocker` 启动 Testcontainers PostgreSQL，分别让 32 个买家运行两种数据库策略，断言恰好一个成功并输出 optimistic retry 次数。`compose.yaml` 提供固定版本的本地 PostgreSQL，供手动探索。在已安装并启动 Docker 的主机上运行 Docker profile 和 Compose 命令。
 
-运行 `docker compose up -d postgres` 后，用 PostgreSQL 提供 order 服务：
+先按上述命令启动 `inventory-service`，再让 API 连接自己的 PostgreSQL 数据库和 inventory gRPC 服务：
 
 ```sh
-STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/stubline STUBLINE_DB_USER=stubline STUBLINE_DB_PASSWORD=stubline STUBLINE_DB_STRATEGY=ROW_LOCK ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
+STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/ticketing STUBLINE_DB_USER=ticketing STUBLINE_DB_PASSWORD=stubline STUBLINE_INVENTORY_TARGET=localhost:9090 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
 ```
 
-使用 `STUBLINE_DB_STRATEGY=OPTIMISTIC` 比较版本更新。Flyway 在启动时执行迁移；示例座位可重复插入。未设置 `STUBLINE_JDBC_URL` 时，server 使用同步的内存 inventory。
+库存拆为独立服务后，先启动 `inventory-service`：座位记录和预订策略由它管理。以上命令连接 ticketing 自己的支付数据库，并通过 gRPC 调用 inventory。比较 `ROW_LOCK` 和 `OPTIMISTIC` 时，在 `inventory-service` 上设置 `STUBLINE_DB_STRATEGY`。
 
 使用完毕后停止本地数据库：
 
@@ -111,11 +111,21 @@ docker compose down
 
 运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.payments.LostReplyClient`。预期包含 `First reply timed out`、`Retry status: 201`、`Provider charges: 1`；两次尝试之间 API 以空的本地存储重启。HTTP 集成测试还会针对 支付方 的真实 keyed endpoint 验证这一情形。PostgreSQL 存储合约运行 `./mvnw -q -Pdocker verify`。
 
+库存拆为独立服务后，在全新检出的仓库运行单模块 `./mvnw -q -pl ... exec:java` 命令之前，先在仓库根目录运行 `./mvnw -q -DskipTests install`。这会把 `inventory-api` 等兄弟模块安装进本地 Maven 仓库；仅运行 `verify` 或 `package` 不会安装它们。
+
+## 远程库存
+
+`inventory-api` 定义 `.proto` 契约并生成 Java stub；`inventory-service` 管理 PostgreSQL 座位并在 9090 端口提供 gRPC。`ticketing-api` 的每次查询和预订都使用两秒 deadline。stub 就是远程调用所依赖的代理：本地方法调用被编码并发往远程进程，回复或状态变为 Java 结果或异常。`NOT_FOUND` 映射为 HTTP 404，已占座的 `FAILED_PRECONDITION` 为 409，`DEADLINE_EXCEEDED` 为 504，`UNAVAILABLE` 为 503。相较于普通 socket，契约可生成客户端和服务端代码，deadline 限制等待时间，状态码能区分故障。504 **不能**证明座位未被预订：服务端可能已经修改状态，只是回复丢失或超时。重试非幂等操作前应先核对。
+
+运行 `docker compose up --build -d --wait`，再运行 `curl http://localhost:8080/events/concert-1/seats` 和 `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
+
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 
 座位列表支持 `limit`（1–100，默认 20）和不透明 `cursor`；响应包含 `seats` 与 `next`。本地 PostgreSQL 配置见 `.env.example`，复制为 `.env`；启用数据库时必须提供用户和密码。
 
 容器使用 `/health/ready` 探针；`/health/live` 表示进程存活。就绪状态只检查本地 PostgreSQL，不级联检查支付服务。容器输出 JSON 日志，SIGTERM 最多等待十秒完成请求。
+
+库存拆为独立服务后，Compose 为 `inventory` 和 `ticketing` 建立独立数据库和用户。两个服务不共享表或 Flyway 历史，避免迁移版本互相冲突。示例部署从空数据开始，由库存服务加入样例座位。迁移现有数据时先停止写入，把 `seats` 复制到 `inventory`，把 `payment_idempotency` 复制到 `ticketing`，核对行数与键后再切换流量。
 
 ## 许可证
 

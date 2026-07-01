@@ -1,4 +1,4 @@
-CREATE TABLE seats (
+CREATE TABLE IF NOT EXISTS seats (
   event_id TEXT NOT NULL,
   seat_id TEXT NOT NULL,
   available BOOLEAN NOT NULL DEFAULT TRUE,

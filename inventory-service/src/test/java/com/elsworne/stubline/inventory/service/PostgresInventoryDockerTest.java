@@ -1,8 +1,10 @@
-package com.elsworne.stubline.inventory.pg;
+package com.elsworne.stubline.inventory.service;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import com.elsworne.stubline.inventory.ReservationRaceTest;
+import java.util.ArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -28,7 +30,7 @@ class PostgresInventoryDockerTest {
           new PostgresInventory(
               postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), strategy)) {
         inventory.add("concert", "A1");
-        int winners = ReservationRaceTest.winners(() -> inventory.reserve("concert", "A1"));
+        int winners = winners(() -> inventory.reserve("concert", "A1"));
         assertEquals(1, winners);
         assertTrue(inventory.retries() <= inventory.versionConflicts());
         assertTrue(inventory.versionConflicts() - inventory.retries() <= 1);
@@ -36,6 +38,31 @@ class PostgresInventoryDockerTest {
             "%s winners=%d versionConflicts=%d retries=%d%n",
             strategy, winners, inventory.versionConflicts(), inventory.retries());
       }
+    }
+  }
+
+  private interface Reservation {
+    boolean reserve() throws Exception;
+  }
+
+  private static int winners(Reservation reservation) throws Exception {
+    try (var workers = Executors.newFixedThreadPool(32)) {
+      var start = new CountDownLatch(1);
+      var ready = new CountDownLatch(32);
+      var futures = new ArrayList<java.util.concurrent.Future<Boolean>>();
+      for (int i = 0; i < 32; i++)
+        futures.add(
+            workers.submit(
+                () -> {
+                  ready.countDown();
+                  start.await();
+                  return reservation.reserve();
+                }));
+      ready.await();
+      start.countDown();
+      int wins = 0;
+      for (var future : futures) if (future.get()) wins++;
+      return wins;
     }
   }
 }

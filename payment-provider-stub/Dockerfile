@@ -5,10 +5,14 @@ COPY mvnw pom.xml ./
 COPY ticketing-api/pom.xml ticketing-api/pom.xml
 COPY load-generator/pom.xml load-generator/pom.xml
 COPY payment-provider-stub/pom.xml payment-provider-stub/pom.xml
+COPY inventory-api/pom.xml inventory-api/pom.xml
+COPY inventory-service/pom.xml inventory-service/pom.xml
 RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-provider-stub -am -DskipTests -DexcludeReactor=true org.apache.maven.plugins:maven-dependency-plugin:3.11.0:go-offline
 COPY ticketing-api ticketing-api
 COPY load-generator load-generator
 COPY payment-provider-stub payment-provider-stub
+COPY inventory-api inventory-api
+COPY inventory-service inventory-service
 RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-provider-stub -am -DskipTests install && \
     ./mvnw -q -pl payment-provider-stub -am org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency
 

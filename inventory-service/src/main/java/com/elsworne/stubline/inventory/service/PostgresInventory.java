@@ -1,7 +1,5 @@
-package com.elsworne.stubline.inventory.pg;
+package com.elsworne.stubline.inventory.service;
 
-import com.elsworne.stubline.inventory.Seat;
-import com.elsworne.stubline.inventory.SeatInventory;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.SQLException;
@@ -9,7 +7,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.flywaydb.core.Flyway;
 
 /** PostgreSQL-backed seat reservations with row locks or optimistic versioning. */
-public final class PostgresInventory implements SeatInventory, AutoCloseable {
+public final class PostgresInventory implements AutoCloseable {
   public enum Strategy {
     ROW_LOCK,
     OPTIMISTIC
@@ -28,7 +26,7 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
     config.setMaximumPoolSize(20);
     config.setConnectionTimeout(5000);
     pool = new HikariDataSource(config);
-    Flyway.configure().dataSource(pool).load().migrate();
+    Flyway.configure().dataSource(pool).table("inventory_flyway_history").load().migrate();
     this.strategy = strategy;
   }
 
@@ -47,7 +45,6 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
     }
   }
 
-  @Override
   public java.util.List<Seat> seatsFor(String eventId) throws SQLException {
     var seats = new java.util.ArrayList<Seat>();
     try (var connection = pool.getConnection();
@@ -62,7 +59,6 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
     return java.util.List.copyOf(seats);
   }
 
-  @Override
   public boolean reserve(String eventId, String seatId) throws SQLException {
     return strategy == Strategy.ROW_LOCK
         ? reserveWithLock(eventId, seatId)
@@ -138,7 +134,6 @@ public final class PostgresInventory implements SeatInventory, AutoCloseable {
     return retries.get();
   }
 
-  @Override
   public boolean ready() {
     try (var connection = pool.getConnection()) {
       return connection.isValid(2);

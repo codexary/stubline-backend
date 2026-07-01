@@ -2,7 +2,7 @@ English | [简体中文](README.zh-CN.md)
 
 # Stubline
 
-Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. The current modular monolith has `catalog`, `inventory`, `orders`, `payments`, `http`, `health` packages in `ticketing-api`. Inventory is in memory and resets on restart. Later features are added in subsequent chapters.
+Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. This version has `ticketing-api` and a PostgreSQL-backed gRPC `inventory-service`. Notifications remain in the API process until they are extracted.
 
 ## Build and test
 
@@ -70,18 +70,18 @@ The load generator prints successful requests per second and p50/p95/p99 latency
 ```sh
 ./mvnw -q verify
 ./mvnw -q -Pdocker verify
-docker compose up -d postgres
+docker compose up --build -d --wait inventory-service
 ```
 
 The default verification runs the gated in-memory race and skips the Docker-tagged PostgreSQL test. With Docker available, `-Pdocker` starts a Testcontainers PostgreSQL instance, runs 32 buyers through each database strategy, asserts exactly one winner and prints optimistic retry counts. `compose.yaml` supplies a pinned local PostgreSQL instance for manual exploration. Run the Docker profile and Compose commands on a host with Docker available.
 
-To serve orders from PostgreSQL after `docker compose up -d postgres`, run:
+To run the API with its own PostgreSQL database and the inventory gRPC service, start `inventory-service` as above, then run:
 
 ```sh
-STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/stubline STUBLINE_DB_USER=stubline STUBLINE_DB_PASSWORD=stubline STUBLINE_DB_STRATEGY=ROW_LOCK ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
+STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/ticketing STUBLINE_DB_USER=ticketing STUBLINE_DB_PASSWORD=stubline STUBLINE_INVENTORY_TARGET=localhost:9090 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
 ```
 
-Use `STUBLINE_DB_STRATEGY=OPTIMISTIC` to compare versioned updates. Flyway applies the migration at startup; the sample seats are inserted idempotently. Without `STUBLINE_JDBC_URL`, the server retains the synchronized in-memory inventory.
+With inventory moved to its own service, start `inventory-service` first: it owns the seat rows and reservation strategy. The command above connects ticketing to its own payment database and to inventory over gRPC. To compare `ROW_LOCK` and `OPTIMISTIC` reservation strategies, set `STUBLINE_DB_STRATEGY` on `inventory-service`.
 
 ```sh
 docker compose down
@@ -113,6 +113,14 @@ The same key travels to the provider's `POST /payments`. Its independent charge 
 
 Run `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.payments.LostReplyClient`. Expected lines include `First reply timed out`, `Retry status: 201`, and `Provider charges: 1`; the demo restarts the API with an empty local store between attempts. The HTTP integration test also exercises this scenario against the payment provider's actual keyed endpoint. Run `./mvnw -q -Pdocker verify` for the PostgreSQL store contract.
 
+Since inventory moved to its own service, before running a single-module `./mvnw -q -pl ... exec:java` command in a fresh checkout, run `./mvnw -q -DskipTests install` from the repository root. This installs sibling modules such as `inventory-api` into the local Maven repository; `verify` and `package` alone do not install them.
+
+## Remote inventory
+
+`inventory-api` owns the `.proto` contract and generated Java stub; `inventory-service` owns PostgreSQL seat rows and serves gRPC on port 9090. `ticketing-api` calls the generated blocking stub with a two-second deadline on **every** lookup and reservation. The stub is the proxy that remote invocation relies on: a local method call marshals a request, sends it to the remote process, and turns its reply or status into a Java result or exception. `NOT_FOUND` becomes HTTP 404, `FAILED_PRECONDITION` (taken seat) becomes 409, `DEADLINE_EXCEEDED` becomes 504, and `UNAVAILABLE` becomes 503. Unlike a plain socket call, the contract generates compatible client and server code, deadlines bound waiting, and status codes distinguish these failures. A 504 does **not** prove the reservation failed: the server may have changed the seat before the reply was lost or the deadline elapsed. Reconcile before retrying a non-idempotent operation.
+
+Run `docker compose up --build -d --wait`, then `curl http://localhost:8080/events/concert-1/seats` and `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`. Expect 200 then 201; repeating the order returns 409. Check the standard gRPC health service with `docker compose ps inventory-service`. `./mvnw -q -Pdocker verify` also exercises real gRPC transport and PostgreSQL through Testcontainers. Local HTTP demos now require the inventory service (`STUBLINE_INVENTORY_TARGET=localhost:9090`); the in-memory inventory remains for isolated tests.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
@@ -122,14 +130,17 @@ Run `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stublin
 | `STUBLINE_DB_USER` | PostgreSQL user | None | When JDBC URL is set |
 | `STUBLINE_DB_PASSWORD` | PostgreSQL password | None | When JDBC URL is set |
 | `STUBLINE_DB_STRATEGY` | Reservation strategy | `ROW_LOCK` | No |
-| `STUBLINE_DB_NAME` | Compose database name | `stubline` | No |
 | `STUBLINE_PAYMENT_PROVIDER_URL` | Optional payment provider simulator | Disabled | No |
+| `STUBLINE_INVENTORY_TARGET` | Inventory gRPC target | `localhost:9090` | No |
+| `STUBLINE_INVENTORY_PORT` | Inventory service gRPC listener | `9090` | No |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system, SBOM, and locally built Compose images for fixable HIGH and CRITICAL vulnerabilities using `.trivyignore`. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
 
 Seat listing accepts `limit` (1–100, default 20) and an opaque `cursor`; the response has `seats` and `next`. Supply `next` as the next request's `cursor`. Copy `.env.example` to `.env` for local PostgreSQL use. Compose reads its database credentials from that file; the application stops at startup with a named error if PostgreSQL is enabled without credentials.
 
 Since container resource limits were introduced, Compose probes `/health/ready`; `/health/live` reports process liveness, while readiness checks the local PostgreSQL connection without querying the payment provider. `/health` remains an alias for earlier scripts. Containers emit JSON log lines with `timestamp`, `level`, `service`, `logger`, `message` and MDC fields; local Maven runs retain readable logs. SIGTERM closes listeners and allows up to ten seconds for active requests, matching the 15-second Compose grace period.
+
+Since inventory moved to its own service, Compose creates separate `inventory` and `ticketing` databases with their own users. The services never share tables or Flyway history. The inventory and payment stores start independent Flyway histories (`inventory_flyway_history` and `payment_flyway_history`). The original `V1` and `V2` files remain under `ticketing-api/src/main/resources/db/migration` as the original database history; their checksums do not change. This example deployment starts with empty service data and inserts only the sample seats. For a live rollout, stop writes, copy `seats` to the inventory database and `payment_idempotency` to the ticketing database, verify row counts and keys, then switch traffic. New service migrations start at V1 because their history tables are new.
 
 ## License
 

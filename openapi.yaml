@@ -92,6 +92,10 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '431':
           $ref: '#/components/responses/HeadersTooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/InventoryTimeout'
   /payments:
     post:
       operationId: createPayment
@@ -237,6 +241,10 @@ paths:
           $ref: '#/components/responses/TooLarge'
         '431':
           $ref: '#/components/responses/HeadersTooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+        '504':
+          $ref: '#/components/responses/InventoryTimeout'
 components:
   responses:
     PaymentDeclined:
@@ -263,6 +271,12 @@ components:
                 type: string
           example:
             status: ok
+    InventoryTimeout:
+      description: Inventory gRPC deadline exceeded
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     Unavailable:
       description: Payment provider or inventory is unavailable
       content:

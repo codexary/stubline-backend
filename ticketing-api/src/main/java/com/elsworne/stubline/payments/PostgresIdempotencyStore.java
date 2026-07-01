@@ -40,7 +40,12 @@ public final class PostgresIdempotencyStore implements IdempotencyStore, AutoClo
   }
 
   public void initialize() {
-    Flyway.configure().dataSource(pool).load().migrate();
+    Flyway.configure()
+        .dataSource(pool)
+        .locations("classpath:db/payment")
+        .table("payment_flyway_history")
+        .load()
+        .migrate();
   }
 
   @Override
@@ -113,6 +118,15 @@ public final class PostgresIdempotencyStore implements IdempotencyStore, AutoClo
 
   private Connection connect() throws SQLException {
     return pool.getConnection();
+  }
+
+  @Override
+  public boolean ready() {
+    try (var connection = pool.getConnection()) {
+      return connection.isValid(2);
+    } catch (java.sql.SQLException e) {
+      return false;
+    }
   }
 
   @Override

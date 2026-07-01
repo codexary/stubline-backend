@@ -5,6 +5,10 @@ import java.time.Instant;
 
 /** Claims keys and stores completed payment replies. */
 public interface IdempotencyStore {
+  default boolean ready() {
+    return true;
+  }
+
   Decision begin(String key, String bodyHash, Instant expiresAt);
 
   void complete(String key, String bodyHash, HttpReply reply);
