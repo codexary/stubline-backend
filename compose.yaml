@@ -2,22 +2,38 @@ services:
   postgres:
     image: postgres:18.6-alpine3.24
     environment:
-      POSTGRES_DB: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${STUBLINE_DB_PASSWORD:?Set STUBLINE_DB_PASSWORD}
-      STUBLINE_DB_PASSWORD: ${STUBLINE_DB_PASSWORD:?Set STUBLINE_DB_PASSWORD}
-    volumes:
-      - ./scripts/postgres-init.sh:/docker-entrypoint-initdb.d/01-databases.sh:ro
+      POSTGRES_DB: stubline
+      POSTGRES_USER: stubline
+      POSTGRES_PASSWORD: stubline
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test: ["CMD-SHELL", "pg_isready -U stubline -d stubline"]
       interval: 2s
       timeout: 2s
       retries: 10
     cpus: 1.0
     mem_limit: 512m
-    stop_grace_period: 15s
+  kafka:
+    image: apache/kafka:4.4.0
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "19092:19092"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
   payment-provider-stub:
     build:
       context: .
@@ -28,29 +44,27 @@ services:
       PROVIDER_ERROR_RATE: "0"
       PROVIDER_OUTAGE: "false"
     ports:
-      - "127.0.0.1:8081:8081"
+      - "8081:8081"
     cpus: 0.5
     mem_limit: 256m
-    stop_grace_period: 15s
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/health/ready"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/health"]
       interval: 5s
       timeout: 2s
       retries: 10
   inventory-service:
-    stop_grace_period: 15s
     build:
       context: .
       dockerfile: inventory-service/Dockerfile
     environment:
-      STUBLINE_JDBC_URL: jdbc:postgresql://postgres:5432/inventory
-      STUBLINE_DB_USER: inventory
-      STUBLINE_DB_PASSWORD: ${STUBLINE_DB_PASSWORD:?Set STUBLINE_DB_PASSWORD}
+      STUBLINE_JDBC_URL: jdbc:postgresql://postgres:5432/stubline
+      STUBLINE_DB_USER: stubline
+      STUBLINE_DB_PASSWORD: stubline
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "127.0.0.1:9090:9090"
+      - "9090:9090"
     healthcheck:
       test: ["CMD", "java", "-cp", "app.jar:lib/*", "com.elsworne.stubline.inventory.service.GrpcHealthCheck"]
       interval: 5s
@@ -61,11 +75,12 @@ services:
       context: .
       dockerfile: ticketing-api/Dockerfile
     environment:
-      STUBLINE_JDBC_URL: jdbc:postgresql://postgres:5432/ticketing
-      STUBLINE_DB_USER: ticketing
-      STUBLINE_DB_PASSWORD: ${STUBLINE_DB_PASSWORD:?Set STUBLINE_DB_PASSWORD}
+      STUBLINE_JDBC_URL: jdbc:postgresql://postgres:5432/stubline
+      STUBLINE_DB_USER: stubline
+      STUBLINE_DB_PASSWORD: stubline
       STUBLINE_PAYMENT_PROVIDER_URL: http://payment-provider-stub:8081
       STUBLINE_INVENTORY_TARGET: inventory-service:9090
+      STUBLINE_KAFKA_BOOTSTRAP: kafka:9092
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,13 +88,14 @@ services:
         condition: service_healthy
       inventory-service:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     ports:
-      - "127.0.0.1:8080:8080"
+      - "8080:8080"
     cpus: 1.0
     mem_limit: 512m
-    stop_grace_period: 15s
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health/ready"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
       interval: 5s
       timeout: 2s
       retries: 10
