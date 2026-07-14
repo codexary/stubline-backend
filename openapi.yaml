@@ -381,6 +381,15 @@ components:
         seatId:
           type: string
           minLength: 1
+        buyer:
+          type: string
+          description: Optional buyer identifier for the outbox event.
+        amountMinor:
+          type: integer
+          minimum: 0
+        currency:
+          type: string
+          example: AUD
     Order:
       type: object
       additionalProperties: false

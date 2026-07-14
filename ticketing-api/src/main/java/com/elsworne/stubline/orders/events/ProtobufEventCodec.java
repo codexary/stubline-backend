@@ -11,12 +11,13 @@ public final class ProtobufEventCodec implements EventCodec {
     var builder =
         OrderPlacedSchema.OrderPlaced.newBuilder()
             .setOrderId(event.orderId())
-            .setEventId(event.eventId())
+            .setEventId(event.concertId())
             .setSeatId(event.seatId())
             .setBuyer(event.buyer())
             .setAmountMinor(event.amountMinor())
             .setCurrency(event.currency())
-            .setOccurredAt(event.occurredAt().toString());
+            .setOccurredAt(event.occurredAt().toString())
+            .setMessageId(event.eventId());
     if (event.buyerNote() != null) builder.setBuyerNote(event.buyerNote());
     return builder.build().toByteArray();
   }
@@ -30,7 +31,8 @@ public final class ProtobufEventCodec implements EventCodec {
         || wire.getBuyer().isEmpty()
         || wire.getCurrency().isEmpty()
         || wire.getOccurredAt().isEmpty()
-        || !wire.hasAmountMinor()) throw new IOException("Missing required event field");
+        || !wire.hasAmountMinor()
+        || wire.getMessageId().isEmpty()) throw new IOException("Missing required event field");
     return new OrderPlaced(
         wire.getOrderId(),
         wire.getEventId(),
@@ -39,6 +41,7 @@ public final class ProtobufEventCodec implements EventCodec {
         wire.getAmountMinor(),
         wire.getCurrency(),
         Instant.parse(wire.getOccurredAt()),
-        wire.hasBuyerNote() ? wire.getBuyerNote() : null);
+        wire.hasBuyerNote() ? wire.getBuyerNote() : null,
+        wire.getMessageId());
   }
 }

@@ -15,13 +15,14 @@ public final class JsonEventCodec implements EventCodec {
     return json.writeValueAsBytes(
         new Wire(
             event.orderId(),
-            event.eventId(),
+            event.concertId(),
             event.seatId(),
             event.buyer(),
             event.amountMinor(),
             event.currency(),
             event.occurredAt().toString(),
-            event.buyerNote()));
+            event.buyerNote(),
+            event.eventId()));
   }
 
   @Override
@@ -34,12 +35,14 @@ public final class JsonEventCodec implements EventCodec {
         || wire.currency() == null
         || wire.occurredAt() == null
         || wire.amountMinor() == null
+        || wire.messageId() == null
         || wire.orderId().isEmpty()
         || wire.eventId().isEmpty()
         || wire.seatId().isEmpty()
         || wire.buyer().isEmpty()
         || wire.currency().isEmpty()
-        || wire.occurredAt().isEmpty()) throw new IOException("Missing required event field");
+        || wire.occurredAt().isEmpty()
+        || wire.messageId().isEmpty()) throw new IOException("Missing required event field");
     return new OrderPlaced(
         wire.orderId(),
         wire.eventId(),
@@ -48,7 +51,8 @@ public final class JsonEventCodec implements EventCodec {
         wire.amountMinor(),
         wire.currency(),
         Instant.parse(wire.occurredAt()),
-        wire.buyerNote());
+        wire.buyerNote(),
+        wire.messageId());
   }
 
   private record Wire(
@@ -59,5 +63,6 @@ public final class JsonEventCodec implements EventCodec {
       Long amountMinor,
       String currency,
       String occurredAt,
-      String buyerNote) {}
+      String buyerNote,
+      String messageId) {}
 }

@@ -14,6 +14,25 @@ import org.testcontainers.containers.PostgreSQLContainer;
 @EnabledIfSystemProperty(named = "run.docker", matches = "true")
 class PostgresInventoryDockerTest {
   @Test
+  void partitionDemoSeatsExistWhenInventoryStarts() throws Exception {
+    try (var postgres = new PostgreSQLContainer<>("postgres:18.6-alpine3.24")) {
+      postgres.start();
+      try (var inventory =
+          new PostgresInventory(
+              postgres.getJdbcUrl(),
+              postgres.getUsername(),
+              postgres.getPassword(),
+              PostgresInventory.Strategy.ROW_LOCK)) {
+        InventoryMain.seedDemoSeats(inventory);
+        assertEquals(2, inventory.seatsFor("concert-1").size());
+        assertEquals(2, inventory.seatsFor("concert-2").size());
+        assertTrue(inventory.reserve("concert-2", "B1"));
+        assertTrue(inventory.reserve("concert-2", "B2"));
+      }
+    }
+  }
+
+  @Test
   void rowLockAdmitsOneBuyer() throws Exception {
     verifyOneWinner(PostgresInventory.Strategy.ROW_LOCK);
   }

@@ -12,6 +12,7 @@ message OrderPlaced {
   string currency = 6;
   string occurred_at = 7;
   optional string buyer_note = 8;
+  string message_id = 10;
   reserved 9;
   reserved "legacy_source";
 }

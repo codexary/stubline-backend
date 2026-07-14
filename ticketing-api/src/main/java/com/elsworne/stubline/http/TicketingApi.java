@@ -4,6 +4,7 @@ import com.elsworne.stubline.inventory.InMemoryInventory;
 import com.elsworne.stubline.inventory.Seat;
 import com.elsworne.stubline.inventory.SeatInventory;
 import com.elsworne.stubline.orders.Order;
+import com.elsworne.stubline.orders.outbox.OrderStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.elsworne.stubline.payments.PaymentProviderStub;
 import com.elsworne.stubline.payments.PaymentService;
@@ -21,6 +22,7 @@ public final class TicketingApi {
   private final PaymentProviderClient payments;
   private final PaymentService paymentService;
   private final long lookupDelayMillis;
+  private final OrderStore orderStore;
   private final java.util.concurrent.atomic.AtomicInteger inFlight =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger peakInFlight =
@@ -38,6 +40,7 @@ public final class TicketingApi {
       SeatInventory inventory, long lookupDelayMillis, PaymentProviderClient payments) {
     this.payments = payments;
     this.paymentService = null;
+    this.orderStore = null;
     if (lookupDelayMillis < 0) throw new IllegalArgumentException("Negative lookup delay");
     this.inventory = inventory;
     this.lookupDelayMillis = lookupDelayMillis;
@@ -53,6 +56,20 @@ public final class TicketingApi {
     this.lookupDelayMillis = lookupDelayMillis;
     this.payments = payments;
     this.paymentService = paymentService;
+    this.orderStore = null;
+  }
+
+  public TicketingApi(
+      SeatInventory inventory,
+      long lookupDelayMillis,
+      PaymentProviderClient payments,
+      PaymentService paymentService,
+      OrderStore orderStore) {
+    this.inventory = inventory;
+    this.lookupDelayMillis = lookupDelayMillis;
+    this.payments = payments;
+    this.paymentService = paymentService;
+    this.orderStore = orderStore;
   }
 
   public TicketingApi(SeatInventory inventory, PaymentService paymentService) {
@@ -60,6 +77,7 @@ public final class TicketingApi {
     this.lookupDelayMillis = 0;
     this.payments = null;
     this.paymentService = paymentService;
+    this.orderStore = null;
   }
 
   public HttpReply handle(HttpRequest request) {
@@ -175,6 +193,12 @@ public final class TicketingApi {
           return ProblemDetails.of(
               409, "Conflict", "seat unavailable", request.path(), Map.of("seatId", seatId));
         Order order = new Order(UUID.randomUUID().toString(), eventId, seatId, Instant.now());
+        if (orderStore != null)
+          orderStore.save(
+              order,
+              body.path("buyer").asText("anonymous"),
+              body.path("amountMinor").asLong(0),
+              body.path("currency").asText("AUD"));
         return new HttpReply(
             201,
             "Created",

@@ -2,7 +2,7 @@ English | [简体中文](README.zh-CN.md)
 
 # Stubline
 
-Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. This version has `ticketing-api` and a PostgreSQL-backed gRPC `inventory-service`. Notifications remain in the API process until they are extracted.
+Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. It began as a modular monolith. The current deployment has `ticketing-api`, a PostgreSQL-backed gRPC `inventory-service`, and a Kafka `notification-service`.
 
 ## Build and test
 
@@ -14,7 +14,7 @@ Install Java 21. The included Maven wrapper downloads Maven 3.9.16. From this re
 
 Expected: exit status 0; `-q` suppresses normal build output. The build runs JUnit tests and Spotless checks. To apply formatting, run `./mvnw spotless:apply`.
 
-See [the project team](docs/team.md).
+See [the project team](docs/team.md). The UDP heartbeat, event codec, and lost-reply payment demos remain standalone. The raw and JDK seat routes, executor load example, early PostgreSQL commands, and early Compose examples were written for the in-process inventory and single-database layout; the current `TicketingMain` uses a gRPC inventory service and service-specific database credentials. Use `git log -- README.md ticketing-api/src/main/java/com/elsworne/stubline/http/TicketingMain.java compose.yaml` to find the commits that introduced those examples. For the current deployment, use the Compose commands under Remote inventory and Durable order events.
 
 ## UDP heartbeat and failure detection
 
@@ -70,18 +70,18 @@ The load generator prints successful requests per second and p50/p95/p99 latency
 ```sh
 ./mvnw -q verify
 ./mvnw -q -Pdocker verify
-docker compose up --build -d --wait inventory-service
+docker compose up -d postgres
 ```
 
 The default verification runs the gated in-memory race and skips the Docker-tagged PostgreSQL test. With Docker available, `-Pdocker` starts a Testcontainers PostgreSQL instance, runs 32 buyers through each database strategy, asserts exactly one winner and prints optimistic retry counts. `compose.yaml` supplies a pinned local PostgreSQL instance for manual exploration. Run the Docker profile and Compose commands on a host with Docker available.
 
-To run the API with its own PostgreSQL database and the inventory gRPC service, start `inventory-service` as above, then run:
+To serve orders from PostgreSQL after `docker compose up -d postgres`, run:
 
 ```sh
-STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/ticketing STUBLINE_DB_USER=ticketing STUBLINE_DB_PASSWORD=stubline STUBLINE_INVENTORY_TARGET=localhost:9090 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
+STUBLINE_JDBC_URL=jdbc:postgresql://localhost:5432/stubline STUBLINE_DB_USER=stubline STUBLINE_DB_PASSWORD=stubline STUBLINE_DB_STRATEGY=ROW_LOCK ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='jdk 8080'
 ```
 
-With inventory moved to its own service, start `inventory-service` first: it owns the seat rows and reservation strategy. The command above connects ticketing to its own payment database and to inventory over gRPC. To compare `ROW_LOCK` and `OPTIMISTIC` reservation strategies, set `STUBLINE_DB_STRATEGY` on `inventory-service`.
+Use `STUBLINE_DB_STRATEGY=OPTIMISTIC` to compare versioned updates. Flyway applies the migration at startup; the sample seats are inserted idempotently. Without `STUBLINE_JDBC_URL`, the server retains the synchronized in-memory inventory.
 
 ```sh
 docker compose down
@@ -101,13 +101,13 @@ Build and start the three services with `docker compose up --build -d --wait`; s
 
 ## Order event formats
 
-`OrderPlaced` lives in `ticketing-api/src/main/protobuf/order_placed.proto` and has one Java model behind `EventCodec`. It carries the order, event and seat IDs, buyer, amount in minor units, currency, timestamp, and an optional buyer note. Run `./mvnw -q -pl ticketing-api -am package` then `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain` to print the JSON and Protobuf sizes, the Protobuf hex bytes, and each field tag. For the pinned sample, the first line is `json=175 bytes protobuf=73 bytes`. In the hex stream, tags `0a`, `12`, `1a`, `22`, `28`, `32`, and `3a` identify fields 1–7; `42` identifies optional field 8 when present. Field 9 and its old name `legacy_source` are reserved and cannot be reused.
+`OrderPlaced` lives in `ticketing-api/src/main/protobuf/order_placed.proto` and has one Java model behind `EventCodec`. It carries the order, event and seat IDs, buyer, amount in minor units, currency, timestamp, and an optional buyer note. Run `./mvnw -q -pl ticketing-api -am package` then `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain` to print the JSON and Protobuf sizes, the Protobuf hex bytes, and each field tag. For the pinned sample, the first line is `json=197 bytes protobuf=82 bytes`. In the hex stream, tags `0a`, `12`, `1a`, `22`, `28`, `32`, and `3a` identify fields 1–7; `42` identifies optional field 8 when present. Field 9 and its old name `legacy_source` are reserved and cannot be reused.
 
 JSON fits when humans inspect messages and consumers can tolerate its larger text payload and field-name coupling. Jackson is easy to debug and needs no code generation, but renaming a field breaks old consumers unless an alias or migration is provided. `FAIL_ON_UNKNOWN_PROPERTIES` is deliberately off so an old consumer can read an event with a newly added field; missing established fields are still rejected. Protobuf fits high-volume or cross-language messaging with a shared schema: smaller bytes, stable numeric field IDs, and explicit compatibility rules. It costs the team a pinned `protoc` build step, generated code, schema review, and discipline never to reuse removed field numbers. Producers and consumers must build from the same committed `.proto` contract.
 
 ## Keyed payments
 
-With `STUBLINE_PAYMENT_PROVIDER_URL` set to the provider origin, send `POST /payments` with `Idempotency-Key` and JSON such as `{"orderId":"order-1","amountCents":2500}`. The first request returns 201. The same key and exact body replays the stored response without charging again; a different body returns 422, and a concurrent retry returns 409. A definite provider decline before money moves releases the key for a later attempt. Unknown outcomes retain the in-flight claim for reconciliation. Completed records expire after 24 hours; in-flight records do not expire automatically. The Flyway `V2` migration records the unique key, SHA-256 body hash, state, expiry, and reply. In PostgreSQL mode it uses the existing Hikari pool; without PostgreSQL the API uses an in-memory store.
+With `STUBLINE_PAYMENT_PROVIDER_URL` set to the provider origin, send `POST /payments` with `Idempotency-Key` and JSON such as `{"orderId":"order-1","amountCents":2500}`. The first request returns 201. The same key and exact body replays the stored response without charging again; a different body returns 422, and a concurrent retry returns 409. A definite provider decline before money moves releases the key for a later attempt. Unknown outcomes retain the in-flight claim for reconciliation. Completed records expire after 24 hours; in-flight records do not expire automatically. The payment Flyway migration records the unique key, SHA-256 body hash, state, expiry, and reply in its own schema history. In PostgreSQL mode it uses a dedicated Hikari pool; without PostgreSQL the API uses an in-memory store.
 
 The same key travels to the provider's `POST /payments`. Its independent charge map returns the original charge for a repeated key and rejects a changed charge. The original `/payments/charge` operation still makes **one** provider call with no automatic retry: an outcome after a timeout may be unknown. A new client attempt with the **same idempotency key** is now safe, because both layers deduplicate. See the [timeout and circuit breaker discussion](#payment-provider-failures) for why an unkeyed charge is never retried automatically.
 
@@ -121,15 +121,31 @@ Since inventory moved to its own service, before running a single-module `./mvnw
 
 Run `docker compose up --build -d --wait`, then `curl http://localhost:8080/events/concert-1/seats` and `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`. Expect 200 then 201; repeating the order returns 409. Check the standard gRPC health service with `docker compose ps inventory-service`. `./mvnw -q -Pdocker verify` also exercises real gRPC transport and PostgreSQL through Testcontainers. Local HTTP demos now require the inventory service (`STUBLINE_INVENTORY_TARGET=localhost:9090`); the in-memory inventory remains for isolated tests.
 
+## Durable order events
+
+In PostgreSQL mode, `POST /orders` writes an order and its Protobuf `OrderPlaced` payload to `order_outbox` in one transaction. The relay selects pending rows with `FOR UPDATE SKIP LOCKED`, sends them to Kafka's `order-placed` topic with the **concert ID as the partition key**, and then marks them published. Publishing directly after the order commit would leave a crash window in which the order exists but its event is lost. The outbox removes that window. A crash after Kafka accepts the event but before the relay marks the row may publish it again, so delivery is **at least once**, not exactly once. Kafka preserves order within a partition; all orders for one event use the same key and therefore retain their order there. It does not order different events globally.
+
+`notification-service` consumes in group `stubline-notifications`, writes the handled message ID and a notification row in one database transaction, logs `Sending e-ticket ...` only for a newly handled ID, and commits its Kafka offset after handling. A crash before offset commit causes redelivery; the unique message ID drops the duplicate. The Docker-tagged test injects exactly that crash and restarts the consumer. The logged send is a demonstration; an external email provider would require its own idempotency key or outbox to close the side-effect gap.
+
+Run `docker compose up --build -d --wait`, create an order with the order-creation `curl` command under Remote inventory, then `docker compose logs notification-service` to see one `Sending e-ticket ...` line. Inspect lag with `docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --describe --group stubline-notifications`; check `CURRENT-OFFSET`, `LOG-END-OFFSET`, and `LAG` per partition. Compose creates `order-placed` explicitly with three partitions before producer and consumer startup; broker auto-creation is disabled. For a fresh stack, run `docker compose down -v` and `./scripts/kafka-partitions-demo.sh`. Inventory seeds `concert-1` A1/A2 and `concert-2` B1/B2 when it starts, so all four demo orders have seats. Four records use `concert-1` and `concert-2` keys, each key staying on one partition. The group reports partitions 0–2 with zero lag. Run `./mvnw -q -Pdocker verify` for the relay, consumer, and crash/redelivery tests.
+
+
+## Database ownership after the outbox integration
+
+Compose creates three PostgreSQL databases: `inventory`, `ticketing`, and `notifications`, each owned by a different login. Inventory owns seat rows, ticketing owns payment decisions and the order outbox, and notifications owns delivery and deduplication rows. Services exchange gRPC calls and Kafka events instead of reading one another's tables. This keeps migrations, permissions, and failures within a service boundary. The two ticketing migrations share one Flyway history so neither encounters an already populated schema without its own history.
+
+Run `./scripts/verify-tags.sh` to check every `chapter-NN` tag in an isolated worktree with `./mvnw -q verify`. Docker tests are separate: `./mvnw -q -Pdocker verify`. For a clean Compose database, run `docker compose down -v` before `docker compose up --build -d --wait`; PostgreSQL init scripts run only when its data directory is new.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
 | --- | --- | --- | --- |
 | `STUBLINE_ADMIN_PORT` | Loopback diagnostics listener | `8081` | No |
-| `STUBLINE_JDBC_URL` | Enable PostgreSQL inventory | In-memory if absent | No |
+| `STUBLINE_JDBC_URL` | Service database JDBC URL | In-memory for API if absent | Required for inventory and notification services |
 | `STUBLINE_DB_USER` | PostgreSQL user | None | When JDBC URL is set |
 | `STUBLINE_DB_PASSWORD` | PostgreSQL password | None | When JDBC URL is set |
 | `STUBLINE_DB_STRATEGY` | Reservation strategy | `ROW_LOCK` | No |
+| `STUBLINE_DB_NAME` | earlier single-database Compose name | `stubline` | No |
 | `STUBLINE_PAYMENT_PROVIDER_URL` | Optional payment provider simulator | Disabled | No |
 | `STUBLINE_INVENTORY_TARGET` | Inventory gRPC target | `localhost:9090` | No |
 | `STUBLINE_INVENTORY_PORT` | Inventory service gRPC listener | `9090` | No |
@@ -140,7 +156,9 @@ Seat listing accepts `limit` (1–100, default 20) and an opaque `cursor`; the r
 
 Since container resource limits were introduced, Compose probes `/health/ready`; `/health/live` reports process liveness, while readiness checks the local PostgreSQL connection without querying the payment provider. `/health` remains an alias for earlier scripts. Containers emit JSON log lines with `timestamp`, `level`, `service`, `logger`, `message` and MDC fields; local Maven runs retain readable logs. SIGTERM closes listeners and allows up to ten seconds for active requests, matching the 15-second Compose grace period.
 
-Since inventory moved to its own service, Compose creates separate `inventory` and `ticketing` databases with their own users. The services never share tables or Flyway history. The inventory and payment stores start independent Flyway histories (`inventory_flyway_history` and `payment_flyway_history`). The original `V1` and `V2` files remain under `ticketing-api/src/main/resources/db/migration` as the original database history; their checksums do not change. This example deployment starts with empty service data and inserts only the sample seats. For a live rollout, stop writes, copy `seats` to the inventory database and `payment_idempotency` to the ticketing database, verify row counts and keys, then switch traffic. New service migrations start at V1 because their history tables are new.
+When inventory moved to its own service, the inventory and payment stores start independent Flyway histories (`inventory_flyway_history` and `payment_flyway_history`). The original `V1` and `V2` files remain under `ticketing-api/src/main/resources/db/migration` as the original database history; their checksums do not change. This example deployment starts with empty service data and inserts only the sample seats. For a live rollout, stop writes, copy `seats` to the inventory service database and `payment_idempotency` to the payment database, verify row counts and keys, then switch traffic. New service migrations start at V1 because their history tables are new.
+
+The inventory extraction separates `inventory` and `ticketing` databases and users; the outbox integration adds `notifications`. Each service owns its tables and Flyway history. The local development password comes from `.env`; there is no password fallback in application code or Compose. Database startup fails with the missing environment variable name. An existing shared database needs a one-off copy of seats into `inventory` and payments into `ticketing` before switching traffic; this demo starts empty and populates sample seats. Ticketing's new Flyway history starts at V1 (payment) and grows to V2 (orders outbox), while the archived original migration files retain their original numbers and checksums.
 
 ## License
 

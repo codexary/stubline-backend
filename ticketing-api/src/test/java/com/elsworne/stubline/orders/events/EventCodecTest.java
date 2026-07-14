@@ -27,7 +27,7 @@ class EventCodecTest {
     var newer =
         new OrderPlaced(
             event.orderId(),
-            event.eventId(),
+            event.concertId(),
             event.seatId(),
             event.buyer(),
             event.amountMinor(),
@@ -36,6 +36,7 @@ class EventCodecTest {
             "aisle");
     var old =
         OrderPlacedSchema.OrderPlaced.getDescriptor().toProto().toBuilder()
+            .removeField(8)
             .removeField(7)
             .removeOneofDecl(1)
             .build();
@@ -51,7 +52,7 @@ class EventCodecTest {
             .getFirst();
     var parsed = DynamicMessage.parseFrom(descriptor, new ProtobufEventCodec().encode(newer));
     assertEquals("o1", parsed.getField(descriptor.findFieldByNumber(1)));
-    assertEquals(1, parsed.getUnknownFields().asMap().size());
+    assertEquals(2, parsed.getUnknownFields().asMap().size());
   }
 
   @Test

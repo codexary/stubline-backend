@@ -18,8 +18,7 @@ public final class InventoryMain {
             requireEnv("STUBLINE_DB_PASSWORD"),
             PostgresInventory.Strategy.valueOf(
                 System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
-    inventory.add("concert-1", "A1");
-    inventory.add("concert-1", "A2");
+    seedDemoSeats(inventory);
     var health = new HealthStatusManager();
     Server server =
         NettyServerBuilder.forPort(
@@ -58,6 +57,13 @@ public final class InventoryMain {
                   inventory.close();
                 }));
     new CountDownLatch(1).await();
+  }
+
+  static void seedDemoSeats(PostgresInventory inventory) throws java.sql.SQLException {
+    inventory.add("concert-1", "A1");
+    inventory.add("concert-1", "A2");
+    inventory.add("concert-2", "B1");
+    inventory.add("concert-2", "B2");
   }
 
   private static String requireEnv(String name) {

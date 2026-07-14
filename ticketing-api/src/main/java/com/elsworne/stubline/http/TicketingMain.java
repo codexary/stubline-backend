@@ -1,6 +1,8 @@
 package com.elsworne.stubline.http;
 
 import com.elsworne.stubline.inventory.GrpcInventoryClient;
+import com.elsworne.stubline.orders.outbox.OrderStore;
+import com.elsworne.stubline.orders.outbox.OutboxRelay;
 import com.elsworne.stubline.payments.InMemoryIdempotencyStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.elsworne.stubline.payments.PaymentService;
@@ -46,7 +48,40 @@ public final class TicketingMain {
                 postgresPayments == null ? new InMemoryIdempotencyStore(clock) : postgresPayments,
                 payments,
                 clock);
-    TicketingApi api = new TicketingApi(inventory, lookupDelayMillis, payments, service);
+    OrderStore orderStore =
+        jdbcUrl == null || jdbcUrl.isBlank()
+            ? null
+            : new OrderStore(
+                jdbcUrl, requireEnv("STUBLINE_DB_USER"), requireEnv("STUBLINE_DB_PASSWORD"));
+    TicketingApi api =
+        new TicketingApi(inventory, lookupDelayMillis, payments, service, orderStore);
+    OutboxRelay relay =
+        orderStore == null
+            ? null
+            : new OutboxRelay(
+                orderStore,
+                System.getenv().getOrDefault("STUBLINE_KAFKA_BOOTSTRAP", "localhost:9092"));
+    var relayWorker =
+        relay == null ? null : java.util.concurrent.Executors.newSingleThreadExecutor();
+    if (relayWorker != null)
+      relayWorker.submit(
+          () -> {
+            while (!Thread.currentThread().isInterrupted()) {
+              try {
+                relay.publishBatch();
+                Thread.sleep(500);
+              } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+              } catch (Exception e) {
+                LOG.warn("Outbox relay failed; will retry", e);
+                try {
+                  Thread.sleep(1000);
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                }
+              }
+            }
+          });
     ServerExecutor strategy =
         args.length > 2
             ? ServerExecutor.valueOf(args[2].toUpperCase(java.util.Locale.ROOT))
@@ -81,6 +116,9 @@ public final class TicketingMain {
         }
       } else throw new IllegalArgumentException("Use raw or jdk");
     } finally {
+      if (relayWorker != null) relayWorker.shutdownNow();
+      if (relay != null) relay.close();
+      if (orderStore != null) orderStore.close();
       inventory.close();
       if (postgresPayments != null) postgresPayments.close();
       if (payments != null) payments.close();

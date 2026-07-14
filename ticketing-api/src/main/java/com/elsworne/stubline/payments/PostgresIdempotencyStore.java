@@ -42,8 +42,8 @@ public final class PostgresIdempotencyStore implements IdempotencyStore, AutoClo
   public void initialize() {
     Flyway.configure()
         .dataSource(pool)
-        .locations("classpath:db/payment")
-        .table("payment_flyway_history")
+        .locations("classpath:db/payment", "classpath:db/orders")
+        .table("ticketing_flyway_history")
         .load()
         .migrate();
   }
