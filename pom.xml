@@ -12,6 +12,7 @@
     <modules>
         <module>inventory-api</module>
         <module>inventory-service</module>
+        <module>notification-service</module>
         <module>ticketing-api</module>
         <module>load-generator</module>
         <module>payment-provider-stub</module>

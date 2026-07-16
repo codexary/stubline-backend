@@ -54,7 +54,7 @@ class NotificationDockerTest {
       producer
           .send(
               new ProducerRecord<>(
-                  "order-placed", event.eventId(), new ProtobufEventCodec().encode(event)))
+                  "order-placed", event.concertId(), new ProtobufEventCodec().encode(event)))
           .get();
     }
   }
@@ -69,21 +69,31 @@ class NotificationDockerTest {
 
   @Test
   void outboxRelayPublishesStoredOrder() throws Exception {
-    try (var postgres = new PostgreSQLContainer<>("postgres:18.6-alpine3.24");
+    try (var postgres =
+            new PostgreSQLContainer<>("postgres:18.6-alpine3.24")
+                .withDatabaseName("ticketing")
+                .withUsername("ticketing");
         var kafka = kafka()) {
       postgres.start();
+      try (var connection =
+              java.sql.DriverManager.getConnection(
+                  postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+          var statement = connection.createStatement()) {
+        statement.execute("CREATE ROLE notifications LOGIN PASSWORD 'notifications'");
+        statement.execute("CREATE DATABASE notifications OWNER notifications");
+      }
+      String notificationsUrl = postgres.getJdbcUrl().replace("/ticketing", "/notifications");
       var event = event();
       try (var orders =
               new OrderStore(
                   postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
           var relay = new OutboxRelay(orders, kafka.getBootstrapServers());
           var notifications =
-              new NotificationStore(
-                  postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+              new NotificationStore(notificationsUrl, "notifications", "notifications");
           var consumer =
               new NotificationConsumer(kafka.getBootstrapServers(), "relay-test", notifications)) {
         orders.save(
-            new Order(event.orderId(), event.eventId(), event.seatId(), event.occurredAt()),
+            new Order(event.orderId(), event.concertId(), event.seatId(), event.occurredAt()),
             event.buyer(),
             event.amountMinor(),
             event.currency());
@@ -91,6 +101,27 @@ class NotificationDockerTest {
         assertEquals(0, relay.publishBatch());
         assertEquals(1, receive(consumer));
         assertEquals(1, notifications.count());
+      }
+    }
+  }
+
+  @Test
+  void distinctMessagesForSameOrderAreHandledOnceEach() throws Exception {
+    try (var postgres = new PostgreSQLContainer<>("postgres:18.6-alpine3.24")) {
+      postgres.start();
+      try (var notifications =
+          new NotificationStore(
+              postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())) {
+        var first =
+            new OrderPlaced(
+                "order-1", "concert", "A1", "buyer", 2500, "AUD", Instant.EPOCH, null, "message-1");
+        var second =
+            new OrderPlaced(
+                "order-1", "concert", "A1", "buyer", 2500, "AUD", Instant.EPOCH, null, "message-2");
+        assertTrue(notifications.handle(first));
+        assertFalse(notifications.handle(first));
+        assertTrue(notifications.handle(second));
+        assertEquals(2, notifications.count());
       }
     }
   }

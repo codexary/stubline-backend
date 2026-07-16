@@ -115,3 +115,25 @@ services:
       interval: 5s
       timeout: 2s
       retries: 10
+  notification-service:
+    stop_grace_period: 15s
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    environment:
+      STUBLINE_JDBC_URL: jdbc:postgresql://postgres:5432/notifications
+      STUBLINE_DB_USER: notifications
+      STUBLINE_DB_PASSWORD: ${STUBLINE_DB_PASSWORD:?Set STUBLINE_DB_PASSWORD}
+      STUBLINE_KAFKA_BOOTSTRAP: kafka:9092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "java", "-cp", "app.jar:lib/*", "com.elsworne.stubline.notification.NotificationHealthCheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
