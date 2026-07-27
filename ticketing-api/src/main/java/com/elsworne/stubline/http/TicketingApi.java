@@ -8,6 +8,7 @@ import com.elsworne.stubline.orders.outbox.OrderStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.elsworne.stubline.payments.PaymentProviderStub;
 import com.elsworne.stubline.payments.PaymentService;
+import com.elsworne.stubline.tickets.TicketService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -23,6 +24,7 @@ public final class TicketingApi {
   private final PaymentService paymentService;
   private final long lookupDelayMillis;
   private final OrderStore orderStore;
+  private TicketService ticketService;
   private final java.util.concurrent.atomic.AtomicInteger inFlight =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger peakInFlight =
@@ -70,6 +72,17 @@ public final class TicketingApi {
     this.payments = payments;
     this.paymentService = paymentService;
     this.orderStore = orderStore;
+  }
+
+  public TicketingApi(
+      SeatInventory inventory,
+      long lookupDelayMillis,
+      PaymentProviderClient payments,
+      PaymentService paymentService,
+      OrderStore orderStore,
+      TicketService ticketService) {
+    this(inventory, lookupDelayMillis, payments, paymentService, orderStore);
+    this.ticketService = ticketService;
   }
 
   public TicketingApi(SeatInventory inventory, PaymentService paymentService) {
@@ -135,11 +148,27 @@ public final class TicketingApi {
       if (request.method().equals("GET") && request.path().equals("/diagnostics/thread"))
         return HttpReply.json(
             200, "OK", "{\"virtual\":" + Thread.currentThread().isVirtual() + "}");
+      if (request.method().equals("GET") && request.path().matches("/orders/[^/]+/ticket")) {
+        if (ticketService == null)
+          return ProblemDetails.of(404, "Not Found", "ticket not found", request.path());
+        String orderId = request.path().split("/")[2];
+        var url = ticketService.downloadUrl(orderId);
+        return url.isPresent()
+            ? new HttpReply(200, "OK", json.writeValueAsBytes(Map.of("url", url.get().toString())))
+            : ProblemDetails.of(404, "Not Found", "ticket not found", request.path());
+      }
       if (paymentService != null
           && request.method().equals("POST")
           && request.path().equals("/payments")) {
         try {
-          return paymentService.pay(request.headers().get("idempotency-key"), request.body());
+          var paymentBody = json.readTree(request.body());
+          String orderId = paymentBody == null ? "" : paymentBody.path("orderId").asText();
+          if (ticketService != null && !ticketService.hasOrder(orderId))
+            return ProblemDetails.of(404, "Not Found", "order not found", request.path());
+          HttpReply reply =
+              paymentService.pay(request.headers().get("idempotency-key"), request.body());
+          if (ticketService != null && reply.status() == 201) ticketService.issue(orderId);
+          return reply;
         } catch (PaymentProviderStub.ChargeNotMadeException e) {
           return HttpReply.json(402, "Payment Required", "{\"error\":\"payment declined\"}");
         } catch (IllegalArgumentException e) {
@@ -229,7 +258,10 @@ public final class TicketingApi {
       Thread.currentThread().interrupt();
       return ProblemDetails.of(503, "Service Unavailable", "interrupted", request.path());
     } catch (java.sql.SQLException e) {
-      return ProblemDetails.of(503, "Service Unavailable", "inventory unavailable", request.path());
+      return ProblemDetails.of(503, "Service Unavailable", "database unavailable", request.path());
+    } catch (software.amazon.awssdk.core.exception.SdkException e) {
+      return ProblemDetails.of(
+          503, "Service Unavailable", "ticket storage unavailable", request.path());
     } catch (IllegalArgumentException e) {
       return ProblemDetails.of(400, "Bad Request", e.getMessage(), request.path());
     } catch (IOException e) {

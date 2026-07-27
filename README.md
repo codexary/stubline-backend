@@ -136,6 +136,16 @@ Compose creates three PostgreSQL databases: `inventory`, `ticketing`, and `notif
 
 Run `./scripts/verify-tags.sh` to check every `chapter-NN` tag in an isolated worktree with `./mvnw -q verify`. Docker tests are separate: `./mvnw -q -Pdocker verify`. For a clean Compose database, run `docker compose down -v` before `docker compose up --build -d --wait`; PostgreSQL init scripts run only when its data directory is new.
 
+## E-ticket objects
+
+After `POST /orders` reserves a seat, `POST /payments` with that order ID and an `Idempotency-Key` charges the buyer. A successful payment renders a one-page PDF containing the order ID, event, seat, and a deterministic QR-like visual mark. The API uploads it under `tickets/<order-id>.pdf` in the `stubline-tickets` bucket and conditionally records that key with the order while holding its database row lock. Concurrent issuers wait, then skip the upload once the key exists. If the process crashes after upload but before commit, the deterministic object key may be orphaned; a later retry replaces that same object and records the key. `GET /orders/{id}/ticket` returns `{"url":"..."}` for a paid order and 404 for an unknown or unpaid order. The signed GET URL lasts five minutes; sharing it delegates read access to that one object until expiry, without disclosing S3 credentials. Whoever has the URL can use it during that interval.
+
+Start with `docker compose up --build -d --wait`. Create an order using the order-creation command under Durable order events and copy its `id`. Then run `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`, followed by `curl -s http://localhost:8080/orders/<id>/ticket`. Expect 201 then a JSON `url` pointing to `http://localhost:8333/stubline-tickets/tickets/<id>.pdf` with `X-Amz-Expires=300`; downloading that URL returns a PDF beginning `%PDF-1.4`. A missing ID returns 404. Run `./mvnw -q -Pdocker verify` for a real SeaweedFS presigned PUT upload, signed download, and expired-URL rejection.
+
+A ticket is a file with a separate lifecycle and read pattern from order rows. Object storage handles its bytes, access delegation, and scaling without enlarging the transactional database or requiring every API replica to mount the same directory. PostgreSQL retains the authoritative order and object key. The application uses only S3 operations, so set `STUBLINE_S3_BUCKET`, `STUBLINE_S3_REGION`, and standard AWS credentials for AWS S3; omit endpoint overrides there. For SeaweedFS set `STUBLINE_S3_ENDPOINT`, `STUBLINE_S3_PUBLIC_ENDPOINT`, and `STUBLINE_S3_PATH_STYLE=true`. The public endpoint must resolve from the buyer's browser because its host is part of the signature.
+
+A distributed file system such as NFS exposes file paths and client caches, often with close-to-open and attribute-cache freshness rules. The S3 API exposes whole-object PUT and GET and prefix listing instead of POSIX open/write/close. Treat a successful PUT as the publication point for a new immutable ticket key. Avoid overwriting issued tickets: caches and gateways can retain an old representation, and listing visibility and overwrite behaviour vary by S3-compatible implementation. Fetch by the recorded exact key rather than using a listing as the source of truth.
+
 ## Configuration
 
 | Name | Meaning | Default | Required |
@@ -149,6 +159,13 @@ Run `./scripts/verify-tags.sh` to check every `chapter-NN` tag in an isolated wo
 | `STUBLINE_PAYMENT_PROVIDER_URL` | Optional payment provider simulator | Disabled | No |
 | `STUBLINE_INVENTORY_TARGET` | Inventory gRPC target | `localhost:9090` | No |
 | `STUBLINE_INVENTORY_PORT` | Inventory service gRPC listener | `9090` | No |
+| `STUBLINE_S3_BUCKET` | Ticket object bucket | None | When ticket storage is enabled |
+| `STUBLINE_S3_ENDPOINT` | Local S3-compatible endpoint | AWS default | No |
+| `STUBLINE_S3_PUBLIC_ENDPOINT` | Browser-accessible signed URL origin | S3 endpoint | No |
+| `STUBLINE_S3_REGION` | S3 region | `us-east-1` | No |
+| `STUBLINE_S3_PATH_STYLE` | S3 path-style requests | `true` | No |
+| `AWS_ACCESS_KEY_ID` | Local S3 access key | None | With local S3 endpoint |
+| `AWS_SECRET_ACCESS_KEY` | Local S3 secret key | None | With local S3 endpoint |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system, SBOM, and locally built Compose images for fixable HIGH and CRITICAL vulnerabilities using `.trivyignore`. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
 

@@ -3,14 +3,17 @@ package com.elsworne.stubline.orders.outbox;
 import com.elsworne.stubline.orders.Order;
 import com.elsworne.stubline.orders.events.OrderPlaced;
 import com.elsworne.stubline.orders.events.ProtobufEventCodec;
+import com.elsworne.stubline.tickets.TicketRepository;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
+import java.util.Optional;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 
 /** Atomically inserts an order and its encoded outbox event. */
-public final class OrderStore implements AutoCloseable {
+public final class OrderStore implements TicketRepository, AutoCloseable {
   private final HikariDataSource pool;
   private final ProtobufEventCodec codec = new ProtobufEventCodec();
 
@@ -69,6 +72,78 @@ public final class OrderStore implements AutoCloseable {
           insert.setObject(
               4, java.time.OffsetDateTime.ofInstant(order.createdAt(), java.time.ZoneOffset.UTC));
           insert.executeUpdate();
+        }
+        connection.commit();
+      } catch (SQLException | RuntimeException e) {
+        connection.rollback();
+        throw e;
+      }
+    }
+  }
+
+  public Optional<Order> find(String id) throws SQLException {
+    try (var connection = pool.getConnection();
+        var select =
+            connection.prepareStatement(
+                "SELECT event_id, seat_id, created_at FROM orders WHERE id = ?")) {
+      select.setString(1, id);
+      try (var rows = select.executeQuery()) {
+        if (!rows.next()) return Optional.empty();
+        return Optional.of(
+            new Order(
+                id,
+                rows.getString(1),
+                rows.getString(2),
+                rows.getObject(3, OffsetDateTime.class).toInstant()));
+      }
+    }
+  }
+
+  public Optional<String> ticketKey(String id) throws SQLException {
+    try (var connection = pool.getConnection();
+        var select =
+            connection.prepareStatement("SELECT ticket_object_key FROM orders WHERE id = ?")) {
+      select.setString(1, id);
+      try (var rows = select.executeQuery()) {
+        return rows.next() ? Optional.ofNullable(rows.getString(1)) : Optional.empty();
+      }
+    }
+  }
+
+  public void markTicket(String id, String key) throws SQLException {
+    try (var connection = pool.getConnection();
+        var update =
+            connection.prepareStatement("UPDATE orders SET ticket_object_key = ? WHERE id = ?")) {
+      update.setString(1, key);
+      update.setString(2, id);
+      if (update.executeUpdate() != 1) throw new SQLException("Order not found: " + id);
+    }
+  }
+
+  @Override
+  public void issueIfAbsent(String id, String key, Runnable upload) throws SQLException {
+    try (var connection = pool.getConnection()) {
+      connection.setAutoCommit(false);
+      try {
+        try (var select =
+            connection.prepareStatement(
+                "SELECT ticket_object_key FROM orders WHERE id = ? FOR UPDATE")) {
+          select.setString(1, id);
+          try (var rows = select.executeQuery()) {
+            if (!rows.next()) throw new SQLException("Order not found: " + id);
+            if (rows.getString(1) != null) {
+              connection.commit();
+              return;
+            }
+          }
+        }
+        upload.run();
+        try (var update =
+            connection.prepareStatement(
+                "UPDATE orders SET ticket_object_key = ? WHERE id = ? AND ticket_object_key IS NULL")) {
+          update.setString(1, key);
+          update.setString(2, id);
+          if (update.executeUpdate() != 1) throw new SQLException("Ticket issue claim lost: " + id);
         }
         connection.commit();
       } catch (SQLException | RuntimeException e) {

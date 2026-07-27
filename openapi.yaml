@@ -96,6 +96,35 @@ paths:
           $ref: '#/components/responses/Unavailable'
         '504':
           $ref: '#/components/responses/InventoryTimeout'
+  /orders/{orderId}/ticket:
+    get:
+      operationId: getTicketDownloadUrl
+      summary: Get a five-minute signed ticket URL
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: order-1
+      responses:
+        '200':
+          description: Ticket download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+              example:
+                url: https://tickets.example.net/tickets/order-1.pdf
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /payments:
     post:
       operationId: createPayment
@@ -142,6 +171,8 @@ paths:
                 amountCents: 1500
         '400':
           $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '402':
           $ref: '#/components/responses/PaymentDeclined'
         '409':

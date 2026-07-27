@@ -22,10 +22,8 @@ public final class TicketService {
 
   public void issue(String id) throws SQLException {
     var order = orders.find(id).orElseThrow(() -> new IllegalArgumentException("Unknown order"));
-    if (orders.ticketKey(id).isPresent()) return;
     String key = "tickets/" + id + ".pdf";
-    storage.put(key, renderer.render(order));
-    orders.markTicket(id, key);
+    orders.issueIfAbsent(id, key, () -> storage.put(key, renderer.render(order)));
   }
 
   public Optional<URI> downloadUrl(String id) throws SQLException {

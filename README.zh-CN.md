@@ -136,6 +136,16 @@ Compose 创建三个 PostgreSQL 数据库：`inventory`、`ticketing` 和 `notif
 
 运行 `./scripts/verify-tags.sh`，在隔离的 worktree 中对每个 `chapter-NN` tag 执行 `./mvnw -q verify`。Docker 测试单独运行：`./mvnw -q -Pdocker verify`。若需要全新的 Compose 数据库，先运行 `docker compose down -v`，再运行 `docker compose up --build -d --wait`；PostgreSQL 初始化脚本仅在数据目录首次创建时执行。
 
+## 电子票对象
+
+`POST /orders` 预留座位后，使用该订单 ID 和 `Idempotency-Key` 调用 `POST /payments` 扣款。成功后，API 生成包含订单 ID、活动、座位和确定性 QR-like 图案的单页 PDF，上传至 `stubline-tickets` bucket 的 `tickets/<order-id>.pdf`，持有订单行锁并条件更新 object key。并发签发者会等待，看到已有 key 后跳过上传。如果上传后、事务提交前崩溃，确定性 key 对应的对象可能暂时孤立；后续重试覆盖同一对象并记录 key。`GET /orders/{id}/ticket` 对已付款订单返回 `{"url":"..."}`，未知或未付款订单返回 404。presigned GET URL 有效五分钟：持有 URL 的人可在期限内读取这个对象，无需获得 S3 凭据。
+
+运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`，再运行 `curl -s http://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
+
+票据文件的生命周期和读取方式与订单行不同。对象存储承载文件字节、访问授权和扩容，避免撑大事务数据库，也不要求每个 API 副本挂载同一目录。PostgreSQL 保留权威订单和 object key。代码只调用 S3 API：使用 AWS S3 时设置 `STUBLINE_S3_BUCKET`、`STUBLINE_S3_REGION` 和标准 AWS 凭据，不设置 endpoint override；使用 SeaweedFS 时设置 `STUBLINE_S3_ENDPOINT`、`STUBLINE_S3_PUBLIC_ENDPOINT` 和 `STUBLINE_S3_PATH_STYLE=true`。公开 endpoint 必须能从买家浏览器解析，因为 host 参与签名。
+
+NFS 这类分布式文件系统提供文件路径和客户端缓存，常有 close-to-open 与属性缓存的刷新规则。S3 API 提供整个对象的 PUT、GET 和按前缀 listing，而不是 POSIX 的 open/write/close。把成功的 PUT 作为新票据 key 的发布点。已发票据使用不可变 key，避免覆盖：缓存和 gateway 可能保留旧版本，不同 S3 兼容实现的 listing 可见性和覆盖行为也可能不同。根据数据库记录的精确 key 获取对象，不把 listing 当作权威来源。
+
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 
 座位列表支持 `limit`（1–100，默认 20）和不透明 `cursor`；响应包含 `seats` 与 `next`。本地 PostgreSQL 配置见 `.env.example`，复制为 `.env`；启用数据库时必须提供用户和密码。

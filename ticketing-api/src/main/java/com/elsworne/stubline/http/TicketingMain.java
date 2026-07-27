@@ -7,6 +7,8 @@ import com.elsworne.stubline.payments.InMemoryIdempotencyStore;
 import com.elsworne.stubline.payments.PaymentProviderClient;
 import com.elsworne.stubline.payments.PaymentService;
 import com.elsworne.stubline.payments.PostgresIdempotencyStore;
+import com.elsworne.stubline.tickets.S3TicketStorage;
+import com.elsworne.stubline.tickets.TicketService;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.net.URI;
 import java.time.Clock;
@@ -53,8 +55,30 @@ public final class TicketingMain {
             ? null
             : new OrderStore(
                 jdbcUrl, requireEnv("STUBLINE_DB_USER"), requireEnv("STUBLINE_DB_PASSWORD"));
+    String s3Endpoint = System.getenv("STUBLINE_S3_ENDPOINT");
+    S3TicketStorage ticketStorage =
+        orderStore == null || System.getenv("STUBLINE_S3_BUCKET") == null
+            ? null
+            : new S3TicketStorage(
+                requireEnv("STUBLINE_S3_BUCKET"),
+                System.getenv().getOrDefault("STUBLINE_S3_REGION", "us-east-1"),
+                s3Endpoint == null ? null : URI.create(s3Endpoint),
+                s3Endpoint == null
+                    ? null
+                    : URI.create(
+                        System.getenv().getOrDefault("STUBLINE_S3_PUBLIC_ENDPOINT", s3Endpoint)),
+                Boolean.parseBoolean(
+                    System.getenv().getOrDefault("STUBLINE_S3_PATH_STYLE", "true")),
+                s3Endpoint == null
+                    ? System.getenv("AWS_ACCESS_KEY_ID")
+                    : requireEnv("AWS_ACCESS_KEY_ID"),
+                s3Endpoint == null
+                    ? System.getenv("AWS_SECRET_ACCESS_KEY")
+                    : requireEnv("AWS_SECRET_ACCESS_KEY"));
+    TicketService tickets =
+        ticketStorage == null ? null : new TicketService(orderStore, ticketStorage);
     TicketingApi api =
-        new TicketingApi(inventory, lookupDelayMillis, payments, service, orderStore);
+        new TicketingApi(inventory, lookupDelayMillis, payments, service, orderStore, tickets);
     OutboxRelay relay =
         orderStore == null
             ? null
@@ -118,6 +142,7 @@ public final class TicketingMain {
     } finally {
       if (relayWorker != null) relayWorker.shutdownNow();
       if (relay != null) relay.close();
+      if (ticketStorage != null) ticketStorage.close();
       if (orderStore != null) orderStore.close();
       inventory.close();
       if (postgresPayments != null) postgresPayments.close();
