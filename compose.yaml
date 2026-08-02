@@ -39,6 +39,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+  seaweedfs:
+    stop_grace_period: 15s
+    image: chrislusf/seaweedfs:4.46
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET: stubline-tickets
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9333/cluster/status"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
   kafka-init:
     image: apache/kafka:4.4.0
     depends_on:
@@ -95,7 +111,15 @@ services:
       STUBLINE_PAYMENT_PROVIDER_URL: http://payment-provider-stub:8081
       STUBLINE_INVENTORY_TARGET: inventory-service:9090
       STUBLINE_KAFKA_BOOTSTRAP: kafka:9092
+      STUBLINE_S3_BUCKET: stubline-tickets
+      STUBLINE_S3_ENDPOINT: http://seaweedfs:8333
+      STUBLINE_S3_PUBLIC_ENDPOINT: http://localhost:8333
+      STUBLINE_S3_PATH_STYLE: "true"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY}
     depends_on:
+      seaweedfs:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       payment-provider-stub:
@@ -137,3 +161,5 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+volumes:
+  seaweedfs_data:
