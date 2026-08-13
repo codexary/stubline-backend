@@ -20,14 +20,8 @@ while IFS= read -r tag; do
     failed=1
     continue
   fi
-  if grep -q MavenWrapperMain "$worktree/mvnw"; then
-    # Early tags used a jar wrapper whose jar was intentionally never committed.
-    cp "$root/mvnw" "$worktree/mvnw"
-    cp "$root/.mvn/wrapper/maven-wrapper.properties" "$worktree/.mvn/wrapper/maven-wrapper.properties"
-    printf '%s: using the current script-only wrapper for the legacy tag\n' "$tag"
-  fi
   printf '%s\n' "-Dmaven.repo.local=$root/.mvn/repository" > "$worktree/.mvn/maven.config"
-  if (cd "$worktree" && ./mvnw -q verify); then
+  if (cd "$worktree" && ./mvnw -q clean verify); then
     printf '%s: PASS\n' "$tag"
   else
     printf '%s: FAIL\n' "$tag"
