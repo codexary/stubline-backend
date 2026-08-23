@@ -18,7 +18,7 @@ class RuntimeDiagnosticsTest {
       var response =
           client.send(
               HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + server.port() + "/diagnostics/runtime"))
+                      URI.create("http://localhost:" + server.port() + "/diagnostics/runtime"))
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       var json = new ObjectMapper().readTree(response.body());

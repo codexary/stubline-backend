@@ -9,9 +9,12 @@ import com.elsworne.stubline.inventory.grpc.SeatState;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Exposes PostgreSQL seat inventory over the shared gRPC contract. */
 public final class InventoryGrpcService extends InventoryGrpc.InventoryImplBase {
+  private static final Logger LOG = LoggerFactory.getLogger(InventoryGrpcService.class);
   private final PostgresInventory inventory;
 
   public InventoryGrpcService(PostgresInventory inventory) {
@@ -21,6 +24,7 @@ public final class InventoryGrpcService extends InventoryGrpc.InventoryImplBase 
   @Override
   public void listSeats(ListSeatsRequest request, StreamObserver<ListSeatsReply> observer) {
     try {
+      LOG.info("listSeats served by {}", System.getenv().getOrDefault("HOSTNAME", "local"));
       var seats = inventory.seatsFor(request.getEventId());
       if (seats.isEmpty()) {
         observer.onError(

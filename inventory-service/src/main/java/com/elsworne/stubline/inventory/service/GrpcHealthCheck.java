@@ -11,7 +11,12 @@ public final class GrpcHealthCheck {
   private GrpcHealthCheck() {}
 
   public static void main(String[] args) {
-    var channel = NettyChannelBuilder.forAddress("127.0.0.1", 9090).usePlaintext().build();
+    var channel =
+        NettyChannelBuilder.forAddress(
+                "localhost",
+                Integer.parseInt(System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090")))
+            .usePlaintext()
+            .build();
     try {
       var status =
           HealthGrpc.newBlockingStub(channel)

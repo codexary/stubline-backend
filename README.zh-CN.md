@@ -9,7 +9,7 @@ Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、�
 安装 Java 21。随仓库提供的 Maven wrapper 会下载 Maven 3.9.16。在仓库根目录运行：
 
 ```sh
-./mvnw -q verify
+./mvnw -q clean verify
 ```
 
 预期退出码为 0；`-q` 隐藏正常构建输出。构建会运行 JUnit 测试和 Spotless 检查。运行 `./mvnw spotless:apply` 可自动格式化。
@@ -24,8 +24,8 @@ UDP 心跳、事件编解码和支付丢失回复演示仍可独立运行。原�
 
 ```sh
 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='detector 9999 700'
-./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='sender api-a 127.0.0.1 9999 200 3'
-./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='sender api-b 127.0.0.1 9999 200'
+./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='sender api-a localhost 9999 200 3'
+./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.health.HeartbeatMain -Dexec.args='sender api-b localhost 9999 200'
 ```
 
 任一实例状态变化时，检测器都会输出完整的成员状态快照。检测器预期出现 `api-a ALIVE` 和 `api-b ALIVE`。发送方 `api-a` 会记录 `dropped api-a sequence=3`（每三个丢一个）；只要之后的包在 700 ms 内到达，检测器仍显示存活。用 Ctrl-C 停止发送方：最后一个有效包之后约 700 ms，检测器记录 `api-a SUSPECTED`。用 Ctrl-Z 暂停同一发送进程，再用 `fg` 恢复：新序号的 heartbeat 到达时记录 `api-a ALIVE`。由于序号从 1 重新开始，检测器重启前，新启动的发送进程须使用新的 instance id。测试还注入乱序和重复序号，并展示慢实例被怀疑后恢复。`SUSPECTED` 只表示未及时收到包；无法区分进程停止、网络延迟或丢包。
@@ -43,9 +43,9 @@ UDP 心跳、事件编解码和支付丢失回复演示仍可独立运行。原�
 如需使用 JDK `HttpServer`，把命令中的 `raw` 改为 `jdk`。每次启动时，本地库存有两个可售座位；以下操作请使用新启动的服务。在第二个终端运行这些准确命令：
 
 ```sh
-curl -v http://127.0.0.1:18080/events/concert-1/seats
-curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://127.0.0.1:18080/orders
-curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://127.0.0.1:18080/orders
+curl -v http://localhost:18080/events/concert-1/seats
+curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:18080/orders
+curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:18080/orders
 ```
 
 预期 `curl -v` 响应状态行依次为 `< HTTP/1.1 200 OK`、`< HTTP/1.1 201 Created` 和 `< HTTP/1.1 409 Conflict`。第一个响应体为 `[{"id":"A1","eventId":"concert-1","available":true},{"id":"A2","eventId":"concert-1","available":true}]`。第二个响应体包含 `"seatId":"A1"`、生成的 `id`、`createdAt` 和 `eventId`；字段顺序、ID 和时间戳会变化。第三个响应体为 `{"error":"seat unavailable"}`。两种实现使用相同的 transport-independent 路由。原始解析器展示 HTTP/1.1 framing 和有界请求处理；日常使用可由 JDK server 负责协议实现。测试涵盖错误请求行、没有 Content-Length 的 POST、分两次写入的 body 和同一 keep-alive 连接上的两个请求。
@@ -56,7 +56,7 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 
 ```sh
 ./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.TicketingMain -Dexec.args='raw 8080 FIXED_POOL 4 100'
-./mvnw -q -pl load-generator exec:java -Dexec.mainClass=com.elsworne.stubline.load.LoadGenerator -Dexec.args='http://127.0.0.1:8080/events/concert-1/seats 32 10'
+./mvnw -q -pl load-generator exec:java -Dexec.mainClass=com.elsworne.stubline.load.LoadGenerator -Dexec.args='http://localhost:8080/events/concert-1/seats 32 10'
 ```
 
 负载生成器输出每秒成功请求数及 p50/p95/p99 延迟。将 `FIXED_POOL` 换成另两种策略作比较。k6 运行方式见 `loadtest/`。仅在回环管理端口（`STUBLINE_ADMIN_PORT`，默认 `8081`）提供诊断路由 `GET /diagnostics/thread` 对虚拟 worker 返回 `{"virtual":true}`，对平台 worker 返回 `false`。
@@ -66,8 +66,8 @@ curl -v -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":
 `UnsafeInventory` 演示 check-then-act 竞态：两个买家都可能看到可用座位。`InMemoryInventory.reserve` 同步检查与更新，因此单进程只允许一个买家成功。`PostgresInventory` 用两种可选策略跨进程保持该约束：`ROW_LOCK` 在事务内使用 `SELECT ... FOR UPDATE`；`OPTIMISTIC` 读取版本，再执行 `UPDATE ... WHERE version = ? AND available = TRUE`，冲突时重试。Flyway 创建 `seats` 表，HikariCP 限制 JDBC 连接数。
 
 ```sh
-./mvnw -q verify
-./mvnw -q -Pdocker verify
+./mvnw -q clean verify
+./mvnw -q -Pdocker clean verify
 docker compose up -d postgres
 ```
 
@@ -93,15 +93,15 @@ docker compose down
 
 ## 支付服务故障
 
-独立启动 provider：`PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`。启动 `ticketing-api` 时设置 `STUBLINE_PAYMENT_PROVIDER_URL=http://127.0.0.1:8081`。`POST /payments/charge` 只调用一次；`GET /payments/charge-status` 可用指数退避和 full jitter 再试两次。二者共用两秒请求 deadline，每次调用只使用剩余预算。客户端记录 circuit breaker 状态变化；四次失败使其打开，此后请求快速失败，三秒后成功的试探请求使其关闭。收费响应不确定时，收费可能已经完成，因此不能盲目重试；安全重试需要后续改动加入的 idempotency key。运行 `./scripts/payment-breaker-demo.sh` 可看到 503、快速拒绝及恢复后的 200。
+独立启动 provider：`PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`。启动 `ticketing-api` 时设置 `STUBLINE_PAYMENT_PROVIDER_URL=http://localhost:8081`。`POST /payments/charge` 只调用一次；`GET /payments/charge-status` 可用指数退避和 full jitter 再试两次。二者共用两秒请求 deadline，每次调用只使用剩余预算。客户端记录 circuit breaker 状态变化；四次失败使其打开，此后请求快速失败，三秒后成功的试探请求使其关闭。收费响应不确定时，收费可能已经完成，因此不能盲目重试；安全重试需要后续改动加入的 idempotency key。运行 `./scripts/payment-breaker-demo.sh` 可看到 503、快速拒绝及恢复后的 200。
 
 ## 容器中的进程
 
-运行 `docker compose up --build -d --wait` 构建并启动三个服务，运行 `docker compose down` 停止。两个 Java 镜像采用多阶段构建和固定版本的 Eclipse Temurin 21 JRE，以 UID 10001 运行，并设置 `-XX:MaxRAMPercentage=60`。Compose 设置 CPU 和内存限制并检查 `/health`。使用 `docker stats`、`docker compose exec -T ticketing-api wget -qO- http://127.0.0.1:8081/diagnostics/runtime` 和 `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max` 查看限制。端点输出 `availableProcessors`、`maxHeapBytes` 和 `containerMemoryLimitBytes`（cgroup 文件不可用或无限制时为 `-1`）。 BuildKit 在 `/root/.m2` 缓存 Maven wrapper 和依赖；先复制 POM 再复制源码，让 Java 代码变更时仍可复用依赖解析层。这能加快重复构建、减少下载并降低 CI 成本。
+运行 `docker compose up --build -d --wait` 构建并启动三个服务，运行 `docker compose down` 停止。两个 Java 镜像采用多阶段构建和固定版本的 Eclipse Temurin 21 JRE，以 UID 10001 运行，并设置 `-XX:MaxRAMPercentage=60`。Compose 设置 CPU 和内存限制并检查 `/health`。使用 `docker stats`、`curl http://localhost:8080/diagnostics/runtime` 和 `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max` 查看限制。端点输出 `availableProcessors`、`maxHeapBytes` 和 `containerMemoryLimitBytes`（cgroup 文件不可用或无限制时为 `-1`）。 BuildKit 在 `/root/.m2` 缓存 Maven wrapper 和依赖；先复制 POM 再复制源码，让 Java 代码变更时仍可复用依赖解析层。这能加快重复构建、减少下载并降低 CI 成本。
 
 ## 订单事件格式
 
-`OrderPlaced` 的共同 schema 在 `ticketing-api/src/main/protobuf/order_placed.proto`，Java 模型通过 `EventCodec` 支持两种编码。字段包括订单、活动和座位 ID，买家，最小货币单位的金额，币种，时间戳，以及可选的买家备注。运行 `./mvnw -q -pl ticketing-api -am package`，然后运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain`，可打印两种大小、Protobuf 十六进制字节和字段 tag。固定样例的第一行是 `json=197 bytes protobuf=82 bytes`。`0a`、`12`、`1a`、`22`、`28`、`32`、`3a` 对应字段 1–7；出现可选字段 8 时为 `42`。已删除的字段 9 和旧名称 `legacy_source` 被 reserved，不能重用。
+`OrderPlaced` 的共同 schema 在 `ticketing-api/src/main/protobuf/order_placed.proto`，Java 模型通过 `EventCodec` 支持两种编码。字段包括订单、活动和座位 ID，买家，最小货币单位的金额，币种，时间戳，以及可选的买家备注。运行 `./mvnw -q -pl ticketing-api -am clean package`，然后运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.orders.events.EventSizeMain`，可打印两种大小、Protobuf 十六进制字节和字段 tag。固定样例的第一行是 `json=197 bytes protobuf=82 bytes`。`0a`、`12`、`1a`、`22`、`28`、`32`、`3a` 对应字段 1–7；出现可选字段 8 时为 `42`。已删除的字段 9 和旧名称 `legacy_source` 被 reserved，不能重用。
 
 当团队需要直接查看消息，且能接受较大的文本及字段名耦合时，JSON 合适。Jackson 易于调试，无需生成代码；但改名会破坏旧消费者，除非提供别名或迁移。我们明确关闭 `FAIL_ON_UNKNOWN_PROPERTIES`，让旧消费者忽略新字段；缺少原有必需字段仍会被拒绝。高吞吐或跨语言消息适合 Protobuf：字节更少，数字字段 ID 稳定，兼容规则明确。团队需要维护固定版本的 `protoc` 构建步骤、生成代码、schema 审查，并绝不重用已删除的字段号。生产者和消费者从同一份提交的 `.proto` 合约构建。
 
@@ -111,7 +111,7 @@ docker compose down
 
 同一个 key 会传给 provider 的 `POST /payments`。其独立的扣款映射对重复 key 返回原扣款，对不同金额拒绝。最初的 `/payments/charge` 仍只调用 provider **一次**，不会自动重试：超时后的结果可能未知。现在客户端使用**同一个 idempotency key** 发起新尝试是安全的，因为两层都去重。无 key 扣款不可自动重试的理由见 [超时及 circuit breaker 说明](#支付服务故障)。
 
-运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.payments.LostReplyClient`。预期包含 `First reply timed out`、`Retry status: 201`、`Provider charges: 1`；两次尝试之间 API 以空的本地存储重启。HTTP 集成测试还会针对 支付方 的真实 keyed endpoint 验证这一情形。PostgreSQL 存储合约运行 `./mvnw -q -Pdocker verify`。
+运行 `./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.payments.LostReplyClient`。预期包含 `First reply timed out`、`Retry status: 201`、`Provider charges: 1`；两次尝试之间 API 以空的本地存储重启。HTTP 集成测试还会针对支付方的真实 keyed endpoint 验证这一情形。PostgreSQL 存储合约运行 `./mvnw -q -Pdocker clean verify`。
 
 库存拆为独立服务后，在全新检出的仓库运行单模块 `./mvnw -q -pl ... exec:java` 命令之前，先在仓库根目录运行 `./mvnw -q -DskipTests install`。这会把 `inventory-api` 等兄弟模块安装进本地 Maven 仓库；仅运行 `verify` 或 `package` 不会安装它们。
 
@@ -119,7 +119,7 @@ docker compose down
 
 `inventory-api` 定义 `.proto` 契约并生成 Java stub；`inventory-service` 管理 PostgreSQL 座位并在 9090 端口提供 gRPC。`ticketing-api` 的每次查询和预订都使用两秒 deadline。stub 就是远程调用所依赖的代理：本地方法调用被编码并发往远程进程，回复或状态变为 Java 结果或异常。`NOT_FOUND` 映射为 HTTP 404，已占座的 `FAILED_PRECONDITION` 为 409，`DEADLINE_EXCEEDED` 为 504，`UNAVAILABLE` 为 503。相较于普通 socket，契约可生成客户端和服务端代码，deadline 限制等待时间，状态码能区分故障。504 **不能**证明座位未被预订：服务端可能已经修改状态，只是回复丢失或超时。重试非幂等操作前应先核对。
 
-运行 `docker compose up --build -d --wait`，再运行 `curl http://localhost:8080/events/concert-1/seats` 和 `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
+运行 `docker compose up --build -d --wait`，再运行 `curl http://localhost:8080/events/concert-1/seats` 和 `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker clean verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
 
 ## 持久的订单事件
 
@@ -127,24 +127,36 @@ docker compose down
 
 `notification-service` 属于 `stubline-notifications` consumer group，在同一数据库事务中写入已处理消息 ID 和通知行，仅对新 ID 记录 `Sending e-ticket ...` 日志，并在处理后提交 Kafka offset。提交 offset 前崩溃会导致重新投递，唯一的消息 ID 会丢弃重复事件。Docker 测试会注入这个崩溃并重启 consumer。日志发送仅用于演示；接入真实邮件供应商时，需要供应商幂等键或另一个 outbox 来处理外部副作用的间隙。
 
-运行 `docker compose up --build -d --wait`，用 “远程库存”一节的下单 `curl` 命令下单，再运行 `docker compose logs notification-service`，预期看到一条 `Sending e-ticket ...`。用 `docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --describe --group stubline-notifications` 查看各分区的 `CURRENT-OFFSET`、`LOG-END-OFFSET` 和 `LAG`。Compose 在 producer 和 consumer 启动前明确创建三个分区的 `order-placed` topic，并关闭 broker 自动创建。运行 `docker compose down -v` 后执行 `./scripts/kafka-partitions-demo.sh`。Inventory 启动时预置 `concert-1` 的 A1/A2 和 `concert-2` 的 B1/B2，因此四笔示例订单都有对应座位。四条记录的 key 是 `concert-1` 和 `concert-2`；相同 key 留在同一分区。consumer group 输出分区 0–2，lag 均为零。运行 `./mvnw -q -Pdocker verify` 验证 relay、consumer 和崩溃重投递。
+运行 `docker compose up --build -d --wait`，用“远程库存”一节的下单 `curl` 命令下单，再运行 `docker compose logs notification-service`，预期看到一条 `Sending e-ticket ...`。用 `docker compose exec kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --describe --group stubline-notifications` 查看各分区的 `CURRENT-OFFSET`、`LOG-END-OFFSET` 和 `LAG`。Compose 在生产者和消费者启动前明确创建含三个分区的 `order-placed` topic，并关闭 broker 自动创建。先运行 `docker compose down -v` 获得全新 stack，再运行 `./scripts/kafka-partitions-demo.sh`。Inventory 启动时预置 `concert-1` 的 A1/A2 和 `concert-2` 的 B1/B2，因此四笔示例订单都有对应座位。预期四条记录的 key 为 `concert-1` 和 `concert-2`；同一 key 的两条记录打印相同分区（两个 key 可能碰巧落在同一分区）。consumer group 输出包含 0、1、2 三个分区，各自 `LAG` 为 0。运行 `./mvnw -q -Pdocker clean verify` 验证 relay、consumer 和崩溃重投递。
 
 
 ## outbox 集成后的数据库所有权
 
 Compose 创建三个 PostgreSQL 数据库：`inventory`、`ticketing` 和 `notifications`，分别由不同账号持有。inventory 管理座位行，ticketing 管理支付决策和订单 outbox，notifications 管理通知和去重行。服务通过 gRPC 调用和 Kafka 事件交互，不直接读取其他服务的表。这样迁移、权限和故障都局限在服务边界内。ticketing 的两组迁移共用一张 Flyway 历史表，避免在已有表而没有对应历史的 schema 上迁移失败。
 
-运行 `./scripts/verify-tags.sh`，在隔离的 worktree 中对每个 `chapter-NN` tag 执行 `./mvnw -q verify`。Docker 测试单独运行：`./mvnw -q -Pdocker verify`。若需要全新的 Compose 数据库，先运行 `docker compose down -v`，再运行 `docker compose up --build -d --wait`；PostgreSQL 初始化脚本仅在数据目录首次创建时执行。
+在同一 checkout 切换 tag 后，构建时始终使用 `clean`：旧 Flyway migration 的 class 文件可能残留在 `target/classes`，与改名后的 migration 版本冲突。
+
+运行 `./scripts/verify-tags.sh`，在隔离的 worktree 中对所有发布标签执行 `./mvnw -q clean verify`。尚无发布标签时，脚本输出 `No release tags found` 并以状态 1 退出。Docker 测试单独运行：`./mvnw -q -Pdocker clean verify`。若需要全新的 Compose 数据库，先运行 `docker compose down -v`，再运行 `docker compose up --build -d --wait`；PostgreSQL 初始化脚本仅在数据目录首次创建时执行。
 
 ## 电子票对象
 
 `POST /orders` 预留座位后，使用该订单 ID 和 `Idempotency-Key` 调用 `POST /payments` 扣款。成功后，API 生成包含订单 ID、活动、座位和确定性 QR-like 图案的单页 PDF，上传至 `stubline-tickets` bucket 的 `tickets/<order-id>.pdf`，持有订单行锁并条件更新 object key。并发签发者会等待，看到已有 key 后跳过上传。如果上传后、事务提交前崩溃，确定性 key 对应的对象可能暂时孤立；后续重试覆盖同一对象并记录 key。`GET /orders/{id}/ticket` 对已付款订单返回 `{"url":"..."}`，未知或未付款订单返回 404。presigned GET URL 有效五分钟：持有 URL 的人可在期限内读取这个对象，无需获得 S3 凭据。
 
-运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`，再运行 `curl -s http://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
+运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`，再运行 `curl -s http://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker clean verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
 
 票据文件的生命周期和读取方式与订单行不同。对象存储承载文件字节、访问授权和扩容，避免撑大事务数据库，也不要求每个 API 副本挂载同一目录。PostgreSQL 保留权威订单和 object key。代码只调用 S3 API：使用 AWS S3 时设置 `STUBLINE_S3_BUCKET`、`STUBLINE_S3_REGION` 和标准 AWS 凭据，不设置 endpoint override；使用 SeaweedFS 时设置 `STUBLINE_S3_ENDPOINT`、`STUBLINE_S3_PUBLIC_ENDPOINT` 和 `STUBLINE_S3_PATH_STYLE=true`。公开 endpoint 必须能从买家浏览器解析，因为 host 参与签名。
 
 NFS 这类分布式文件系统提供文件路径和客户端缓存，常有 close-to-open 与属性缓存的刷新规则。S3 API 提供整个对象的 PUT、GET 和按前缀 listing，而不是 POSIX 的 open/write/close。把成功的 PUT 作为新票据 key 的发布点。已发票据使用不可变 key，避免覆盖：缓存和 gateway 可能保留旧版本，不同 S3 兼容实现的 listing 可见性和覆盖行为也可能不同。根据数据库记录的精确 key 获取对象，不把 listing 当作权威来源。
+
+## 命名与发现
+
+Compose 的内部网络为每个服务提供 DNS 名称。ticketing 通过名称访问 `inventory-service:9090`、`payment-provider-stub:8081`、`kafka:9092`、`postgres:5432` 和 `seaweedfs:8333`。每个地址都能通过环境变量配置（`STUBLINE_INVENTORY_HOST` 与 `STUBLINE_INVENTORY_PORT`、`STUBLINE_PAYMENT_PROVIDER_URL`、`STUBLINE_KAFKA_BOOTSTRAP`、`STUBLINE_JDBC_URL`、`STUBLINE_S3_ENDPOINT`）。容器内的 `localhost` 只指该容器，因此仅供本地 health probe 使用。inventory 不发布固定 host port，支持 `docker compose up --scale inventory-service=2`。
+
+在已运行或全新 stack 上运行 `./scripts/dns-discovery-demo.sh`。脚本先启动一个 inventory 副本，不重启 `ticketing-api` 地扩为两个；扩容后再次运行固定解析客户端，等待 25 秒让连接退役并刷新 DNS，然后发送 24 次请求，打印每个副本实际处理数。实测第二次 `/diagnostics/dns?name=inventory-service` 返回 `addresses:["172.22.0.9","172.22.0.6"]` 和 `effectiveTtl:"5"`。实际地址由 Docker 分配，每次不同。固定解析客户端在扩容前后都只打印一个选中的地址并通过它完成请求，即使扩容后 Compose DNS 已返回两个地址。一次运行中，两个容器分别处理 11 和 13 个请求，总数 24；实际地址和分布每次可能不同。
+
+`JAVA_TOOL_OPTIONS=-Dsun.net.inetaddr.ttl=5` 限制 ticketing JVM 的正向 DNS 缓存时间。`GET /diagnostics/dns?name=<host>` 报告 JVM 查询结果和 `networkaddress.cache.ttl`（或 JVM 的 `sun.net.inetaddr.ttl` fallback）的有效值。客户端若只解析一次名称并以所得地址建立 channel，即使 DNS 后来变化也仍固定在该地址。普通 gRPC channel 使用目标名称和 `round_robin`，让 DNS resolver 刷新地址集合并分发调用。单靠 DNS TTL 不会重新分配已建立的连接。
+
+5 秒 JVM DNS TTL 避免旧地址无限期留在缓存，但仅有 TTL 不够：gRPC 在连接事件发生时才重新解析，不会仅因 TTL 到期而刷新。inventory server 设定 15 秒 `maxConnectionAge` 与 5 秒 grace，让命名的 `round_robin` channel 重新连接并发现新增副本。演示值刻意较短；生产环境通常采用更长的值，例如 30 分钟，并结合部署及连接排空要求调整。连接退役增加 TLS 握手、连接建立和 DNS 查询开销，也会短暂重新分布负载；grace 让进行中的 RPC 完成。
 
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 

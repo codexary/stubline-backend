@@ -17,7 +17,7 @@ public final class LoadGenerator {
 
   public static void main(String[] args) throws Exception {
     URI uri =
-        URI.create(args.length > 0 ? args[0] : "http://127.0.0.1:8080/events/concert-1/seats");
+        URI.create(args.length > 0 ? args[0] : "http://localhost:8080/events/concert-1/seats");
     int clients = args.length > 1 ? Integer.parseInt(args[1]) : 32;
     int seconds = args.length > 2 ? Integer.parseInt(args[2]) : 10;
     if (clients < 1 || seconds < 1)

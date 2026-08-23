@@ -83,7 +83,7 @@ class PaymentProviderClientTest {
 
     Stub(long delay, int initialStatus) throws IOException {
       status = new AtomicInteger(initialStatus);
-      server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+      server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
       server.createContext(
           "/",
           exchange -> {
@@ -104,7 +104,7 @@ class PaymentProviderClientTest {
     }
 
     URI uri() {
-      return URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+      return URI.create("http://localhost:" + server.getAddress().getPort());
     }
 
     int calls() {

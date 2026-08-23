@@ -33,7 +33,7 @@ class ExecutorStrategiesTest {
       return client
           .send(
               HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + server.port() + "/diagnostics/thread"))
+                      URI.create("http://localhost:" + server.port() + "/diagnostics/thread"))
                   .build(),
               HttpResponse.BodyHandlers.ofString())
           .body();
@@ -56,7 +56,7 @@ class ExecutorStrategiesTest {
                         .send(
                             HttpRequest.newBuilder(
                                     URI.create(
-                                        "http://127.0.0.1:"
+                                        "http://localhost:"
                                             + server.port()
                                             + "/events/concert-1/seats"))
                                 .build(),

@@ -33,10 +33,20 @@ public final class TicketingMain {
         providerUrl == null || providerUrl.isBlank()
             ? null
             : new PaymentProviderClient(URI.create(providerUrl));
-    String target = System.getenv().getOrDefault("STUBLINE_INVENTORY_TARGET", "localhost:9090");
+    String target =
+        System.getenv()
+            .getOrDefault(
+                "STUBLINE_INVENTORY_TARGET",
+                System.getenv().getOrDefault("STUBLINE_INVENTORY_HOST", "localhost")
+                    + ":"
+                    + System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090"));
     GrpcInventoryClient inventory =
         new GrpcInventoryClient(
-            NettyChannelBuilder.forTarget(target).usePlaintext().build(), Duration.ofSeconds(2));
+            NettyChannelBuilder.forTarget(target)
+                .defaultLoadBalancingPolicy("round_robin")
+                .usePlaintext()
+                .build(),
+            Duration.ofSeconds(2));
     Clock clock = Clock.systemUTC();
     PostgresIdempotencyStore postgresPayments =
         jdbcUrl == null || jdbcUrl.isBlank()

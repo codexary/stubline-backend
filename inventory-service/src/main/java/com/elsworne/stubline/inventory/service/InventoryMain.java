@@ -5,6 +5,7 @@ import io.grpc.health.v1.HealthCheckResponse;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.HealthStatusManager;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 /** Starts the inventory gRPC server with the standard health service. */
 public final class InventoryMain {
@@ -23,6 +24,8 @@ public final class InventoryMain {
     Server server =
         NettyServerBuilder.forPort(
                 Integer.parseInt(System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090")))
+            .maxConnectionAge(15, TimeUnit.SECONDS)
+            .maxConnectionAgeGrace(5, TimeUnit.SECONDS)
             .addService(new InventoryGrpcService(inventory))
             .addService(health.getHealthService())
             .build()

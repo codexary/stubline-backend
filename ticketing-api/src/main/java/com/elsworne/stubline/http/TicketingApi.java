@@ -1,5 +1,6 @@
 package com.elsworne.stubline.http;
 
+import com.elsworne.stubline.diagnostics.DnsDiagnostics;
 import com.elsworne.stubline.inventory.InMemoryInventory;
 import com.elsworne.stubline.inventory.Seat;
 import com.elsworne.stubline.inventory.SeatInventory;
@@ -19,6 +20,7 @@ import java.util.UUID;
 /** Transport-independent seat and order routes. */
 public final class TicketingApi {
   private final ObjectMapper json = new ObjectMapper();
+  private final DnsDiagnostics dns = new DnsDiagnostics();
   private final SeatInventory inventory;
   private final PaymentProviderClient payments;
   private final PaymentService paymentService;
@@ -124,6 +126,20 @@ public final class TicketingApi {
           inFlight.decrementAndGet();
         }
         return seatPage(request, eventId);
+      }
+      if (request.method().equals("GET") && request.path().equals("/diagnostics/dns")) {
+        String query = request.query();
+        if (query == null || !query.startsWith("name="))
+          return ProblemDetails.of(400, "Bad Request", "name is required", request.path());
+        String name =
+            java.net.URLDecoder.decode(query.substring(5), java.nio.charset.StandardCharsets.UTF_8);
+        try {
+          return new HttpReply(200, "OK", json.writeValueAsBytes(dns.report(name)));
+        } catch (java.net.UnknownHostException e) {
+          return HttpReply.json(404, "Not Found", "{\"error\":\"name not found\"}");
+        } catch (IllegalArgumentException e) {
+          return HttpReply.json(400, "Bad Request", "{\"error\":\"invalid DNS name\"}");
+        }
       }
       if (request.method().equals("GET") && request.path().equals("/diagnostics/runtime")) {
         long memoryLimit = -1;

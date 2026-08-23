@@ -24,7 +24,12 @@ public final class AdminHttpServer implements AutoCloseable {
             HttpReply reply =
                 path.startsWith("/diagnostics/")
                     ? api.handleAdmin(
-                        new HttpRequest(exchange.getRequestMethod(), path, Map.of(), new byte[0]))
+                        new HttpRequest(
+                            exchange.getRequestMethod(),
+                            path,
+                            Map.of(),
+                            new byte[0],
+                            exchange.getRequestURI().getRawQuery()))
                     : ProblemDetails.of(404, "Not Found", "route not found", path);
             reply = ProblemDetails.normalize(reply, path);
             reply.headers().forEach((key, value) -> exchange.getResponseHeaders().set(key, value));
