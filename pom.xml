@@ -16,6 +16,7 @@
         <module>ticketing-api</module>
         <module>load-generator</module>
         <module>payment-provider-stub</module>
+        <module>dev-token-issuer</module>
     </modules>
 
     <properties>
