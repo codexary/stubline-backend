@@ -2,8 +2,11 @@ package com.elsworne.stubline.inventory.service;
 
 import io.grpc.Server;
 import io.grpc.health.v1.HealthCheckResponse;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.protobuf.services.HealthStatusManager;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -14,16 +17,27 @@ public final class InventoryMain {
   public static void main(String[] args) throws Exception {
     var inventory =
         new PostgresInventory(
-            requireEnv("STUBLINE_JDBC_URL"),
-            requireEnv("STUBLINE_DB_USER"),
-            requireEnv("STUBLINE_DB_PASSWORD"),
+            System.getenv()
+                .getOrDefault("STUBLINE_JDBC_URL", "jdbc:postgresql://localhost:5432/inventory"),
+            System.getenv().getOrDefault("STUBLINE_DB_USER", "inventory"),
+            required("STUBLINE_DB_PASSWORD"),
             PostgresInventory.Strategy.valueOf(
                 System.getenv().getOrDefault("STUBLINE_DB_STRATEGY", "ROW_LOCK")));
     seedDemoSeats(inventory);
     var health = new HealthStatusManager();
-    Server server =
+    var builder =
         NettyServerBuilder.forPort(
-                Integer.parseInt(System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090")))
+            Integer.parseInt(System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090")));
+    if (System.getenv("STUBLINE_GRPC_CA") != null)
+      builder.sslContext(
+          GrpcSslContexts.forServer(
+                  Path.of(System.getenv("STUBLINE_GRPC_CERT")).toFile(),
+                  Path.of(System.getenv("STUBLINE_GRPC_KEY")).toFile())
+              .trustManager(Path.of(System.getenv("STUBLINE_GRPC_CA")).toFile())
+              .clientAuth(ClientAuth.REQUIRE)
+              .build());
+    Server server =
+        builder
             .maxConnectionAge(15, TimeUnit.SECONDS)
             .maxConnectionAgeGrace(5, TimeUnit.SECONDS)
             .addService(new InventoryGrpcService(inventory))
@@ -69,9 +83,10 @@ public final class InventoryMain {
     inventory.add("concert-2", "B2");
   }
 
-  private static String requireEnv(String name) {
+  private static String required(String name) {
     String value = System.getenv(name);
-    if (value == null || value.isBlank()) throw new IllegalStateException(name + " is required");
+    if (value == null || value.isBlank())
+      throw new IllegalStateException("Missing required setting: " + name);
     return value;
   }
 }

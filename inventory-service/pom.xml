@@ -14,6 +14,12 @@
 
     <dependencies>
         <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.86</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>com.elsworne.stubline</groupId>
             <artifactId>inventory-api</artifactId>
             <version>1.0.0-SNAPSHOT</version>
