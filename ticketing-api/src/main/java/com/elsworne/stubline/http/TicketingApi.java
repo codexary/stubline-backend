@@ -12,6 +12,8 @@ import com.elsworne.stubline.payments.PaymentService;
 import com.elsworne.stubline.tickets.TicketService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.Map;
@@ -27,6 +29,12 @@ public final class TicketingApi {
   private final long lookupDelayMillis;
   private final OrderStore orderStore;
   private TicketService ticketService;
+  private BuyerTokens buyerTokens;
+
+  public void requireBuyerTokens(BuyerTokens tokens) {
+    this.buyerTokens = tokens;
+  }
+
   private final java.util.concurrent.atomic.AtomicInteger inFlight =
       new java.util.concurrent.atomic.AtomicInteger();
   private final java.util.concurrent.atomic.AtomicInteger peakInFlight =
@@ -96,26 +104,32 @@ public final class TicketingApi {
   }
 
   public HttpReply handle(HttpRequest request) {
-    if (request.path().startsWith("/diagnostics/"))
-      return ProblemDetails.of(404, "Not Found", "route not found", request.path());
-    return route(request);
-  }
-
-  HttpReply handleAdmin(HttpRequest request) {
-    return route(request);
-  }
-
-  private HttpReply route(HttpRequest request) {
     try {
+      String subject = null;
+      boolean protectedRoute =
+          request.method().equals("POST")
+                  && (request.path().equals("/orders") || request.path().equals("/payments"))
+              || request.method().equals("GET") && request.path().matches("/orders/[^/]+/ticket");
+      if (buyerTokens != null && protectedRoute) {
+        String authorization = request.header("authorization");
+        subject = buyerTokens.subject(authorization);
+        if (subject == null)
+          return new HttpReply(
+              401,
+              "Unauthorized",
+              (authorization == null || authorization.isBlank()
+                      ? ""
+                      : "{\"error\":\"invalid_token\"}")
+                  .getBytes(java.nio.charset.StandardCharsets.UTF_8),
+              Map.of(
+                  "WWW-Authenticate",
+                  authorization == null || authorization.isBlank()
+                      ? "Bearer realm=\"stubline\""
+                      : "Bearer realm=\"stubline\", error=\"invalid_token\", error_description=\"Invalid or expired bearer token\""));
+      }
       if ((request.method().equals("GET") || request.method().equals("HEAD"))
-          && (request.path().equals("/health") || request.path().equals("/health/live")))
+          && request.path().equals("/health"))
         return HttpReply.json(200, "OK", "{\"status\":\"ok\"}");
-      if ((request.method().equals("GET") || request.method().equals("HEAD"))
-          && request.path().equals("/health/ready"))
-        return inventory.ready() && (paymentService == null || paymentService.ready())
-            ? HttpReply.json(200, "OK", "{\"status\":\"ready\"}")
-            : ProblemDetails.of(
-                503, "Service Unavailable", "inventory unavailable", request.path());
       if (request.method().equals("GET") && request.path().matches("/events/[^/]+/seats")) {
         String eventId = request.path().split("/")[2];
         int now = inFlight.incrementAndGet();
@@ -125,14 +139,13 @@ public final class TicketingApi {
         } finally {
           inFlight.decrementAndGet();
         }
-        return seatPage(request, eventId);
+        return new HttpReply(200, "OK", json.writeValueAsBytes(inventory.seatsFor(eventId)));
       }
-      if (request.method().equals("GET") && request.path().equals("/diagnostics/dns")) {
-        String query = request.query();
-        if (query == null || !query.startsWith("name="))
-          return ProblemDetails.of(400, "Bad Request", "name is required", request.path());
+      if (request.method().equals("GET") && request.path().startsWith("/diagnostics/dns?name=")) {
         String name =
-            java.net.URLDecoder.decode(query.substring(5), java.nio.charset.StandardCharsets.UTF_8);
+            java.net.URLDecoder.decode(
+                request.path().substring("/diagnostics/dns?name=".length()),
+                java.nio.charset.StandardCharsets.UTF_8);
         try {
           return new HttpReply(200, "OK", json.writeValueAsBytes(dns.report(name)));
         } catch (java.net.UnknownHostException e) {
@@ -166,12 +179,15 @@ public final class TicketingApi {
             200, "OK", "{\"virtual\":" + Thread.currentThread().isVirtual() + "}");
       if (request.method().equals("GET") && request.path().matches("/orders/[^/]+/ticket")) {
         if (ticketService == null)
-          return ProblemDetails.of(404, "Not Found", "ticket not found", request.path());
+          return HttpReply.json(404, "Not Found", "{\"error\":\"ticket not found\"}");
         String orderId = request.path().split("/")[2];
+        if (buyerTokens != null && !ticketService.ownedBy(orderId, subject))
+          return HttpReply.json(
+              403, "Forbidden", "{\"error\":\"ticket belongs to another buyer\"}");
         var url = ticketService.downloadUrl(orderId);
         return url.isPresent()
             ? new HttpReply(200, "OK", json.writeValueAsBytes(Map.of("url", url.get().toString())))
-            : ProblemDetails.of(404, "Not Found", "ticket not found", request.path());
+            : HttpReply.json(404, "Not Found", "{\"error\":\"ticket not found\"}");
       }
       if (paymentService != null
           && request.method().equals("POST")
@@ -180,7 +196,7 @@ public final class TicketingApi {
           var paymentBody = json.readTree(request.body());
           String orderId = paymentBody == null ? "" : paymentBody.path("orderId").asText();
           if (ticketService != null && !ticketService.hasOrder(orderId))
-            return ProblemDetails.of(404, "Not Found", "order not found", request.path());
+            return HttpReply.json(404, "Not Found", "{\"error\":\"order not found\"}");
           HttpReply reply =
               paymentService.pay(request.headers().get("idempotency-key"), request.body());
           if (ticketService != null && reply.status() == 201) ticketService.issue(orderId);
@@ -206,139 +222,89 @@ public final class TicketingApi {
                       ? payments.chargeStatus(orderId, java.time.Duration.ofSeconds(2))
                       : null;
           if (result == null)
-            return ProblemDetails.of(404, "Not Found", "route not found", request.path());
+            return HttpReply.json(404, "Not Found", "{\"error\":\"route not found\"}");
           return HttpReply.json(200, "OK", result);
-        } catch (PaymentProviderClient.ProviderRejectedException e) {
-          int status = e.status() == 402 ? 402 : 422;
-          return ProblemDetails.of(
-              status,
-              status == 402 ? "Payment Required" : "Unprocessable Content",
-              status == 402 ? "payment declined" : "provider rejected payment request",
-              request.path());
         } catch (IOException e) {
-          return ProblemDetails.of(
-              503, "Service Unavailable", "payment provider unavailable", request.path());
+          return HttpReply.json(
+              503, "Service Unavailable", "{\"error\":\"payment provider unavailable\"}");
         }
       }
       if (request.method().equals("POST") && request.path().equals("/orders")) {
-        JsonNode body = json.readTree(request.body());
-        if (body == null || !body.isObject())
-          return ProblemDetails.of(400, "Bad Request", "Expected a JSON object", request.path());
-        for (String field : new String[] {"eventId", "seatId"}) {
-          if (!body.path(field).isTextual() || body.path(field).asText().isBlank())
-            return ProblemDetails.of(
-                400,
-                "Bad Request",
-                field + " must be a non-empty string",
-                request.path(),
-                Map.of("field", field));
+        var span =
+            GlobalOpenTelemetry.getTracer("stubline.orders").spanBuilder("order.place").startSpan();
+        try (var scope = span.makeCurrent()) {
+          JsonNode body = json.readTree(request.body());
+          if (body == null
+              || !body.path("eventId").isTextual()
+              || !body.path("seatId").isTextual()
+              || body.path("eventId").asText().isBlank()
+              || body.path("seatId").asText().isBlank())
+            return HttpReply.json(
+                400, "Bad Request", "{\"error\":\"eventId and seatId are required\"}");
+          String eventId = body.path("eventId").asText(), seatId = body.path("seatId").asText();
+          if (!inventory.reserve(eventId, seatId))
+            return HttpReply.json(409, "Conflict", "{\"error\":\"seat unavailable\"}");
+          Order order = new Order(UUID.randomUUID().toString(), eventId, seatId, Instant.now());
+          span.setAttribute("order.id", order.id());
+          if (orderStore != null)
+            orderStore.save(
+                order,
+                body.path("buyer").asText("anonymous"),
+                body.path("amountMinor").asLong(0),
+                body.path("currency").asText("AUD"),
+                subject,
+                traceparent(Span.current()));
+          return new HttpReply(
+              201,
+              "Created",
+              json.writeValueAsBytes(
+                  Map.of(
+                      "id",
+                      order.id(),
+                      "eventId",
+                      order.eventId(),
+                      "seatId",
+                      order.seatId(),
+                      "createdAt",
+                      order.createdAt().toString())));
+        } finally {
+          span.end();
         }
-        String eventId = body.path("eventId").asText(), seatId = body.path("seatId").asText();
-        if (!inventory.reserve(eventId, seatId))
-          return ProblemDetails.of(
-              409, "Conflict", "seat unavailable", request.path(), Map.of("seatId", seatId));
-        Order order = new Order(UUID.randomUUID().toString(), eventId, seatId, Instant.now());
-        if (orderStore != null)
-          orderStore.save(
-              order,
-              body.path("buyer").asText("anonymous"),
-              body.path("amountMinor").asLong(0),
-              body.path("currency").asText("AUD"));
-        return new HttpReply(
-            201,
-            "Created",
-            json.writeValueAsBytes(
-                Map.of(
-                    "id",
-                    order.id(),
-                    "eventId",
-                    order.eventId(),
-                    "seatId",
-                    order.seatId(),
-                    "createdAt",
-                    order.createdAt().toString())));
       }
-      return ProblemDetails.of(404, "Not Found", "route not found", request.path());
+      return HttpReply.json(404, "Not Found", "{\"error\":\"route not found\"}");
     } catch (io.grpc.StatusRuntimeException e) {
       return switch (e.getStatus().getCode()) {
-        case NOT_FOUND -> ProblemDetails.of(404, "Not Found", "seat not found", request.path());
+        case NOT_FOUND -> HttpReply.json(404, "Not Found", "{\"error\":\"seat not found\"}");
         case FAILED_PRECONDITION ->
-            ProblemDetails.of(409, "Conflict", "seat unavailable", request.path());
+            HttpReply.json(409, "Conflict", "{\"error\":\"seat unavailable\"}");
         case DEADLINE_EXCEEDED ->
-            ProblemDetails.of(
-                504, "Gateway Timeout", "inventory deadline exceeded", request.path());
+            HttpReply.json(504, "Gateway Timeout", "{\"error\":\"inventory deadline exceeded\"}");
         default ->
-            ProblemDetails.of(503, "Service Unavailable", "inventory unavailable", request.path());
+            HttpReply.json(503, "Service Unavailable", "{\"error\":\"inventory unavailable\"}");
       };
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
-      return ProblemDetails.of(503, "Service Unavailable", "interrupted", request.path());
+      return HttpReply.json(503, "Service Unavailable", "{\"error\":\"interrupted\"}");
     } catch (java.sql.SQLException e) {
-      return ProblemDetails.of(503, "Service Unavailable", "database unavailable", request.path());
+      return HttpReply.json(503, "Service Unavailable", "{\"error\":\"database unavailable\"}");
     } catch (software.amazon.awssdk.core.exception.SdkException e) {
-      return ProblemDetails.of(
-          503, "Service Unavailable", "ticket storage unavailable", request.path());
-    } catch (IllegalArgumentException e) {
-      return ProblemDetails.of(400, "Bad Request", e.getMessage(), request.path());
+      return HttpReply.json(
+          503, "Service Unavailable", "{\"error\":\"ticket storage unavailable\"}");
     } catch (IOException e) {
-      return ProblemDetails.of(400, "Bad Request", "Malformed JSON", request.path());
+      return HttpReply.json(400, "Bad Request", "{\"error\":\"invalid JSON\"}");
     }
   }
 
-  private HttpReply seatPage(HttpRequest request, String eventId)
-      throws IOException, java.sql.SQLException {
-    int limit = 20;
-    String cursor = null;
-    if (request.query() != null && !request.query().isBlank()) {
-      for (String part : request.query().split("&")) {
-        String[] pair = part.split("=", 2);
-        String key = java.net.URLDecoder.decode(pair[0], java.nio.charset.StandardCharsets.UTF_8);
-        String value =
-            pair.length == 2
-                ? java.net.URLDecoder.decode(pair[1], java.nio.charset.StandardCharsets.UTF_8)
-                : "";
-        if (key.equals("limit")) limit = Integer.parseInt(value);
-        else if (key.equals("cursor")) cursor = value;
-        else throw new IllegalArgumentException("Unknown query parameter: " + key);
-      }
-    }
-    if (limit < 1 || limit > 100)
-      throw new IllegalArgumentException("limit must be between 1 and 100");
-    String after = null;
-    if (cursor != null) {
-      String decoded =
-          new String(
-              java.util.Base64.getUrlDecoder().decode(cursor),
-              java.nio.charset.StandardCharsets.UTF_8);
-      String prefix = eventId + ":";
-      if (!decoded.startsWith(prefix) || decoded.length() == prefix.length())
-        throw new IllegalArgumentException("Invalid cursor");
-      after = decoded.substring(prefix.length());
-    }
-    var all =
-        inventory.seatsFor(eventId).stream()
-            .sorted(java.util.Comparator.comparing(Seat::id))
-            .toList();
-    var page = new java.util.ArrayList<Seat>();
-    for (Seat seat : all) {
-      if (after != null && seat.id().compareTo(after) <= 0) continue;
-      page.add(seat);
-      if (page.size() > limit) break;
-    }
-    String next = null;
-    if (page.size() > limit) {
-      page.remove(page.size() - 1);
-      next =
-          java.util.Base64.getUrlEncoder()
-              .withoutPadding()
-              .encodeToString(
-                  (eventId + ":" + page.getLast().id())
-                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
-    }
-    var body = new java.util.LinkedHashMap<String, Object>();
-    body.put("seats", page);
-    body.put("next", next);
-    return new HttpReply(200, "OK", json.writeValueAsBytes(body));
+  private static String traceparent(Span span) {
+    var context = span.getSpanContext();
+    return context.isValid()
+        ? "00-"
+            + context.getTraceId()
+            + "-"
+            + context.getSpanId()
+            + "-"
+            + (context.isSampled() ? "01" : "00")
+        : null;
   }
 
   public int peakInFlight() {
