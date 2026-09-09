@@ -2,11 +2,17 @@ package com.elsworne.stubline.http;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import com.sun.net.httpserver.HttpsConfigurator;
+import com.sun.net.httpserver.HttpsServer;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.security.KeyStore;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
 
 /** Serves the ticketing API with the JDK HTTP implementation. */
 public final class JdkHttpServer implements AutoCloseable {
@@ -25,8 +31,37 @@ public final class JdkHttpServer implements AutoCloseable {
   public JdkHttpServer(int port, TicketingApi api, ServerExecutor strategy, int poolSize)
       throws IOException {
     executor = strategy.create(poolSize);
-    server = HttpServer.create(new InetSocketAddress(port), 0);
+    if (System.getenv("STUBLINE_TLS_KEYSTORE") == null) {
+      server = HttpServer.create(new InetSocketAddress(port), 0);
+    } else {
+      KeyStore store;
+      try {
+        store = KeyStore.getInstance("PKCS12");
+      } catch (java.security.GeneralSecurityException e) {
+        throw new IOException(e);
+      }
+      char[] password = required("STUBLINE_TLS_PASSWORD").toCharArray();
+      try (var input = new FileInputStream(System.getenv("STUBLINE_TLS_KEYSTORE"))) {
+        try {
+          store.load(input, password);
+        } catch (java.security.GeneralSecurityException e) {
+          throw new IOException(e);
+        }
+      }
+      try {
+        var managers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        managers.init(store, password);
+        var context = SSLContext.getInstance("TLS");
+        context.init(managers.getKeyManagers(), null, null);
+        var https = HttpsServer.create(new InetSocketAddress(port), 0);
+        https.setHttpsConfigurator(new HttpsConfigurator(context));
+        server = https;
+      } catch (java.security.GeneralSecurityException e) {
+        throw new IOException(e);
+      }
+    }
     server.setExecutor(executor);
+    server.createContext("/orders", exchange -> handle(exchange, api));
     server.createContext("/", exchange -> handle(exchange, api));
   }
 
@@ -105,5 +140,12 @@ public final class JdkHttpServer implements AutoCloseable {
       Thread.currentThread().interrupt();
       executor.shutdownNow();
     }
+  }
+
+  private static String required(String name) {
+    String value = System.getenv(name);
+    if (value == null || value.isBlank())
+      throw new IllegalStateException("Missing required setting: " + name);
+    return value;
   }
 }

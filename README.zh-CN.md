@@ -97,7 +97,7 @@ docker compose down
 
 ## 容器中的进程
 
-运行 `docker compose up --build -d --wait` 构建并启动三个服务，运行 `docker compose down` 停止。两个 Java 镜像采用多阶段构建和固定版本的 Eclipse Temurin 21 JRE，以 UID 10001 运行，并设置 `-XX:MaxRAMPercentage=60`。Compose 设置 CPU 和内存限制并检查 `/health`。使用 `docker stats`、`curl http://localhost:8080/diagnostics/runtime` 和 `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max` 查看限制。端点输出 `availableProcessors`、`maxHeapBytes` 和 `containerMemoryLimitBytes`（cgroup 文件不可用或无限制时为 `-1`）。 BuildKit 在 `/root/.m2` 缓存 Maven wrapper 和依赖；先复制 POM 再复制源码，让 Java 代码变更时仍可复用依赖解析层。这能加快重复构建、减少下载并降低 CI 成本。
+运行 `docker compose up --build -d --wait` 构建并启动三个服务，运行 `docker compose down` 停止。两个 Java 镜像采用多阶段构建和固定版本的 Eclipse Temurin 21 JRE，以 UID 10001 运行，并设置 `-XX:MaxRAMPercentage=60`。Compose 设置 CPU 和内存限制并检查 `/health`。使用 `docker stats`、`docker compose exec -T ticketing-api wget -qO- http://127.0.0.1:8081/diagnostics/runtime` 和 `docker compose exec ticketing-api cat /sys/fs/cgroup/memory.max` 查看限制。端点输出 `availableProcessors`、`maxHeapBytes` 和 `containerMemoryLimitBytes`（cgroup 文件不可用或无限制时为 `-1`）。 BuildKit 在 `/root/.m2` 缓存 Maven wrapper 和依赖；先复制 POM 再复制源码，让 Java 代码变更时仍可复用依赖解析层。这能加快重复构建、减少下载并降低 CI 成本。
 
 ## 订单事件格式
 
@@ -119,7 +119,7 @@ docker compose down
 
 `inventory-api` 定义 `.proto` 契约并生成 Java stub；`inventory-service` 管理 PostgreSQL 座位并在 9090 端口提供 gRPC。`ticketing-api` 的每次查询和预订都使用两秒 deadline。stub 就是远程调用所依赖的代理：本地方法调用被编码并发往远程进程，回复或状态变为 Java 结果或异常。`NOT_FOUND` 映射为 HTTP 404，已占座的 `FAILED_PRECONDITION` 为 409，`DEADLINE_EXCEEDED` 为 504，`UNAVAILABLE` 为 503。相较于普通 socket，契约可生成客户端和服务端代码，deadline 限制等待时间，状态码能区分故障。504 **不能**证明座位未被预订：服务端可能已经修改状态，只是回复丢失或超时。重试非幂等操作前应先核对。
 
-运行 `docker compose up --build -d --wait`，再运行 `curl http://localhost:8080/events/concert-1/seats` 和 `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker clean verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
+运行 `docker compose up --build -d --wait`，再运行 `curl --cacert certs/dev/public-ca.crt https://localhost:8080/events/concert-1/seats` 和 `curl --cacert certs/dev/public-ca.crt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker clean verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
 
 ## 持久的订单事件
 
@@ -142,7 +142,7 @@ Compose 创建三个 PostgreSQL 数据库：`inventory`、`ticketing` 和 `notif
 
 `POST /orders` 预留座位后，使用该订单 ID 和 `Idempotency-Key` 调用 `POST /payments` 扣款。成功后，API 生成包含订单 ID、活动、座位和确定性 QR-like 图案的单页 PDF，上传至 `stubline-tickets` bucket 的 `tickets/<order-id>.pdf`，持有订单行锁并条件更新 object key。并发签发者会等待，看到已有 key 后跳过上传。如果上传后、事务提交前崩溃，确定性 key 对应的对象可能暂时孤立；后续重试覆盖同一对象并记录 key。`GET /orders/{id}/ticket` 对已付款订单返回 `{"url":"..."}`，未知或未付款订单返回 404。presigned GET URL 有效五分钟：持有 URL 的人可在期限内读取这个对象，无需获得 S3 凭据。
 
-运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`，再运行 `curl -s http://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker clean verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
+运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' https://localhost:8080/payments`，再运行 `curl --cacert certs/dev/public-ca.crt -s -H "Authorization: Bearer $TOKEN" https://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker clean verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
 
 票据文件的生命周期和读取方式与订单行不同。对象存储承载文件字节、访问授权和扩容，避免撑大事务数据库，也不要求每个 API 副本挂载同一目录。PostgreSQL 保留权威订单和 object key。代码只调用 S3 API：使用 AWS S3 时设置 `STUBLINE_S3_BUCKET`、`STUBLINE_S3_REGION` 和标准 AWS 凭据，不设置 endpoint override；使用 SeaweedFS 时设置 `STUBLINE_S3_ENDPOINT`、`STUBLINE_S3_PUBLIC_ENDPOINT` 和 `STUBLINE_S3_PATH_STYLE=true`。公开 endpoint 必须能从买家浏览器解析，因为 host 参与签名。
 
@@ -157,6 +157,21 @@ Compose 的内部网络为每个服务提供 DNS 名称。ticketing 通过名称
 `JAVA_TOOL_OPTIONS=-Dsun.net.inetaddr.ttl=5` 限制 ticketing JVM 的正向 DNS 缓存时间。`GET /diagnostics/dns?name=<host>` 报告 JVM 查询结果和 `networkaddress.cache.ttl`（或 JVM 的 `sun.net.inetaddr.ttl` fallback）的有效值。客户端若只解析一次名称并以所得地址建立 channel，即使 DNS 后来变化也仍固定在该地址。普通 gRPC channel 使用目标名称和 `round_robin`，让 DNS resolver 刷新地址集合并分发调用。单靠 DNS TTL 不会重新分配已建立的连接。
 
 5 秒 JVM DNS TTL 避免旧地址无限期留在缓存，但仅有 TTL 不够：gRPC 在连接事件发生时才重新解析，不会仅因 TTL 到期而刷新。inventory server 设定 15 秒 `maxConnectionAge` 与 5 秒 grace，让命名的 `round_robin` channel 重新连接并发现新增副本。演示值刻意较短；生产环境通常采用更长的值，例如 30 分钟，并结合部署及连接排空要求调整。连接退役增加 TLS 握手、连接建立和 DNS 查询开销，也会短暂重新分布负载；grace 让进行中的 RPC 完成。
+
+## 传输安全与买家 token
+
+先运行 `./scripts/dev-ca.sh`，再启动 Compose。脚本在忽略的 `certs/dev/` 下创建两个短期开发 CA：对外 API CA 与独立的内部 gRPC CA。server 证书的 SAN 含 Compose DNS 名和 `localhost`。脚本导出 PKCS#12 keystore；每个服务只读挂载所需证书与密钥。挂载的私钥和 keystore 权限为 600，属主为服务 UID 10001。真实团队从受信 CA 取得证书，在 secrets manager 中保护私钥、到期前轮换，绝不提交密钥。
+
+JWT 签名演示使用当前 HTTPS issuer 的 JWKS。启动 Compose 后，在仓库根目录运行：
+
+```sh
+TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')
+curl --cacert certs/dev/public-ca.crt -i -X POST -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A2"}' https://localhost:8080/orders
+./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.JwtAnatomy -Dexec.args="$TOKEN https://localhost:8443/.well-known/jwks.json certs/dev/public-ca.crt"
+```
+
+未携带 token 的 `POST /orders` 预期返回 401，并包含 `WWW-Authenticate: Bearer realm="stubline"`。`JwtAnatomy` 的预期输出包含 `signature valid: true`。
+
 
 本地运行 `./mvnw -q verify` 可执行 CI 检查，并生成 `target/bom.json`。CI 扫描文件系统、SBOM 和本地构建的 Compose 镜像，对有修复版本的 HIGH、CRITICAL 漏洞失败（使用 `.trivyignore`）。安装 Renovate app 后，它才会按 Maven、Docker 镜像和 GitHub Actions 分组提出更新。
 

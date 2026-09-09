@@ -4,3 +4,7 @@ target/
 .mvn/maven.config
 .mvn/wrapper/dists/
 .mvn/wrapper/maven-wrapper.jar
+/certs/
+/.env.release
+
+/.env

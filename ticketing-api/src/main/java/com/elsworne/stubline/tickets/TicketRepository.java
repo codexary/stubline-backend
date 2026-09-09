@@ -8,6 +8,10 @@ import java.util.Optional;
 public interface TicketRepository {
   Optional<Order> find(String id) throws SQLException;
 
+  default boolean ownedBy(String id, String subject) throws SQLException {
+    return false;
+  }
+
   Optional<String> ticketKey(String id) throws SQLException;
 
   void markTicket(String id, String key) throws SQLException;

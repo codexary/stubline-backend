@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+./scripts/dev-ca.sh
 docker compose up --build -d --wait
+token=$(curl --cacert certs/dev/public-ca.crt --fail --silent 'https://localhost:8443/token?sub=demo')
 for pair in 'concert-1 A1' 'concert-2 B1' 'concert-1 A2' 'concert-2 B2'; do
   read -r event seat <<< "$pair"
-  curl --fail --silent -H 'Content-Type: application/json' \
+  curl --cacert certs/dev/public-ca.crt --fail --silent -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
     -d "{\"eventId\":\"$event\",\"seatId\":\"$seat\"}" \
-    http://localhost:8080/orders
+    https://localhost:8080/orders
   printf '\n'
 done
 printf '\nKafka records (partition and event key):\n'

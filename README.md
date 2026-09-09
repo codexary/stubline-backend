@@ -121,7 +121,7 @@ Since inventory moved to its own service, before running a single-module `./mvnw
 
 `inventory-api` owns the `.proto` contract and generated Java stub; `inventory-service` owns PostgreSQL seat rows and serves gRPC on port 9090. `ticketing-api` calls the generated blocking stub with a two-second deadline on **every** lookup and reservation. The stub is the proxy that remote invocation relies on: a local method call marshals a request, sends it to the remote process, and turns its reply or status into a Java result or exception. `NOT_FOUND` becomes HTTP 404, `FAILED_PRECONDITION` (taken seat) becomes 409, `DEADLINE_EXCEEDED` becomes 504, and `UNAVAILABLE` becomes 503. Unlike a plain socket call, the contract generates compatible client and server code, deadlines bound waiting, and status codes distinguish these failures. A 504 does **not** prove the reservation failed: the server may have changed the seat before the reply was lost or the deadline elapsed. Reconcile before retrying a non-idempotent operation.
 
-Run `docker compose up --build -d --wait`, then `curl http://localhost:8080/events/concert-1/seats` and `curl -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' http://localhost:8080/orders`. Expect 200 then 201; repeating the order returns 409. Check the standard gRPC health service with `docker compose ps inventory-service`. `./mvnw -q -Pdocker clean verify` also exercises real gRPC transport and PostgreSQL through Testcontainers. Local HTTP demos now require the inventory service (`STUBLINE_INVENTORY_TARGET=localhost:9090`); the in-memory inventory remains for isolated tests.
+Run `docker compose up --build -d --wait`, then `curl --cacert certs/dev/public-ca.crt https://localhost:8080/events/concert-1/seats` and `curl --cacert certs/dev/public-ca.crt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders`. Expect 200 then 201; repeating the order returns 409. Check the standard gRPC health service with `docker compose ps inventory-service`. `./mvnw -q -Pdocker clean verify` also exercises real gRPC transport and PostgreSQL through Testcontainers. Local HTTP demos now require the inventory service (`STUBLINE_INVENTORY_TARGET=localhost:9090`); the in-memory inventory remains for isolated tests.
 
 ## Durable order events
 
@@ -142,7 +142,7 @@ Run `./scripts/verify-tags.sh` to check all release tags in an isolated worktree
 
 After `POST /orders` reserves a seat, `POST /payments` with that order ID and an `Idempotency-Key` charges the buyer. A successful payment renders a one-page PDF containing the order ID, event, seat, and a deterministic QR-like visual mark. The API uploads it under `tickets/<order-id>.pdf` in the `stubline-tickets` bucket and conditionally records that key with the order while holding its database row lock. Concurrent issuers wait, then skip the upload once the key exists. If the process crashes after upload but before commit, the deterministic object key may be orphaned; a later retry replaces that same object and records the key. `GET /orders/{id}/ticket` returns `{"url":"..."}` for a paid order and 404 for an unknown or unpaid order. The signed GET URL lasts five minutes; sharing it delegates read access to that one object until expiry, without disclosing S3 credentials. Whoever has the URL can use it during that interval.
 
-Start with `docker compose up --build -d --wait`. Create an order using the order-creation command under Durable order events and copy its `id`. Then run `curl -i -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' http://localhost:8080/payments`, followed by `curl -s http://localhost:8080/orders/<id>/ticket`. Expect 201 then a JSON `url` pointing to `http://localhost:8333/stubline-tickets/tickets/<id>.pdf` with `X-Amz-Expires=300`; downloading that URL returns a PDF beginning `%PDF-1.4`. A missing ID returns 404. Run `./mvnw -q -Pdocker clean verify` for a real SeaweedFS presigned PUT upload, signed download, and expired-URL rejection.
+Start with `docker compose up --build -d --wait`. Create an order using the order-creation command under Durable order events and copy its `id`. Then run `curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' https://localhost:8080/payments`, followed by `curl --cacert certs/dev/public-ca.crt -s -H "Authorization: Bearer $TOKEN" https://localhost:8080/orders/<id>/ticket`. Expect 201 then a JSON `url` pointing to `http://localhost:8333/stubline-tickets/tickets/<id>.pdf` with `X-Amz-Expires=300`; downloading that URL returns a PDF beginning `%PDF-1.4`. A missing ID returns 404. Run `./mvnw -q -Pdocker clean verify` for a real SeaweedFS presigned PUT upload, signed download, and expired-URL rejection.
 
 A ticket is a file with a separate lifecycle and read pattern from order rows. Object storage handles its bytes, access delegation, and scaling without enlarging the transactional database or requiring every API replica to mount the same directory. PostgreSQL retains the authoritative order and object key. The application uses only S3 operations, so set `STUBLINE_S3_BUCKET`, `STUBLINE_S3_REGION`, and standard AWS credentials for AWS S3; omit endpoint overrides there. For SeaweedFS set `STUBLINE_S3_ENDPOINT`, `STUBLINE_S3_PUBLIC_ENDPOINT`, and `STUBLINE_S3_PATH_STYLE=true`. The public endpoint must resolve from the buyer's browser because its host is part of the signature.
 
@@ -178,6 +178,12 @@ The 5-second JVM DNS TTL prevents stale addresses from surviving indefinitely, b
 | `STUBLINE_S3_PATH_STYLE` | S3 path-style requests | `true` | No |
 | `AWS_ACCESS_KEY_ID` | Local S3 access key | None | With local S3 endpoint |
 | `AWS_SECRET_ACCESS_KEY` | Local S3 secret key | None | With local S3 endpoint |
+| `STUBLINE_TLS_KEYSTORE` | API TLS keystore file | None | With HTTPS |
+| `STUBLINE_TLS_PASSWORD` | TLS keystore password | None | With HTTPS |
+| `STUBLINE_JWKS_URI` | Buyer token key set URL | Disabled | No |
+| `STUBLINE_JWKS_CA` | CA for JWKS TLS | System trust | No |
+| `STUBLINE_JWT_ISSUER` | Expected issuer | Development issuer | With JWKS |
+| `STUBLINE_CORS_ORIGINS` | Allowed browser origins | Off | No |
 
 Run the CI checks locally with `./mvnw -q verify`; this also writes `target/bom.json`. CI scans the file system, SBOM, and locally built Compose images for fixable HIGH and CRITICAL vulnerabilities using `.trivyignore`. Renovate groups Maven, Docker image, and GitHub Actions updates once the Renovate app is installed.
 
@@ -188,6 +194,25 @@ Since container resource limits were introduced, Compose probes `/health/ready`;
 When inventory moved to its own service, the inventory and payment stores start independent Flyway histories (`inventory_flyway_history` and `payment_flyway_history`). The original `V1` and `V2` files remain under `ticketing-api/src/main/resources/db/migration` as the original database history; their checksums do not change. This example deployment starts with empty service data and inserts only the sample seats. For a live rollout, stop writes, copy `seats` to the inventory service database and `payment_idempotency` to the payment database, verify row counts and keys, then switch traffic. New service migrations start at V1 because their history tables are new.
 
 The inventory extraction separates `inventory` and `ticketing` databases and users; the outbox integration adds `notifications`. Each service owns its tables and Flyway history. The local development password comes from `.env`; there is no password fallback in application code or Compose. Database startup fails with the missing environment variable name. An existing shared database needs a one-off copy of seats into `inventory` and payments into `ticketing` before switching traffic; this demo starts empty and populates sample seats. Ticketing's new Flyway history starts at V1 (payment) and grows to V2 (orders outbox), while the archived original migration files retain their original numbers and checksums.
+
+## Transport security and buyer tokens
+
+
+Run `./scripts/dev-ca.sh` before Compose. It creates two short-lived development CAs under ignored `certs/dev/`: a public API CA and a separate internal gRPC CA. The server certificates include the Compose DNS names and `localhost` as SANs. The script exports PKCS#12 keystores and mounts only the certificates and keys each service needs, read-only. Mounted private keys and keystores have mode 600 and belong to the service UID 10001. A real team obtains certificates from its approved CA, protects private keys in a secrets manager, rotates them before expiry, and never commits them.
+
+```sh
+./scripts/dev-ca.sh
+docker compose up --build -d --wait
+TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')
+curl --cacert certs/dev/public-ca.crt https://localhost:8080/health
+curl --cacert certs/dev/public-ca.crt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders
+curl --cacert certs/dev/public-ca.crt -i -X POST -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A2"}' https://localhost:8080/orders
+./mvnw -q -pl ticketing-api exec:java -Dexec.mainClass=com.elsworne.stubline.http.JwtAnatomy -Dexec.args="$TOKEN https://localhost:8443/.well-known/jwks.json certs/dev/public-ca.crt"
+```
+
+The health request returns `{"status":"ok"}`. The order request returns 201 and an order ID. The request without a bearer token returns 401 with `WWW-Authenticate: Bearer realm="stubline"`. `JwtAnatomy` prints the decoded header, claims and `signature valid: true`; it uses only JDK cryptography for learning. The product uses Nimbus JOSE + JWT for validation. To observe rotation, run `curl --cacert certs/dev/public-ca.crt -X POST https://localhost:8443/rotate`, request a fresh token and call the API with it. The API fetches the new `kid` from JWKS.
+
+TLS encrypts traffic, detects modification and authenticates the server through a trusted certificate and matching host name. It does not identify the buyer or authorize an order. Internal gRPC also requires client certificates so inventory accepts only services trusted by the internal CA. A JWT has an encoded header, claims and signature; its claims are readable, not encrypted. The signature, pinned RS256 algorithm, `iss`, `aud`, `exp`, `nbf` and `sub` checks limit forgery and misuse. Bearer tokens can be used by whoever steals them; HTTPS, short lifetimes, careful storage and revocation/rotation procedures reduce exposure. The development issuer's unauthenticated `/token` endpoint is for local use only.
 
 ## License
 

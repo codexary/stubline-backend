@@ -44,6 +44,9 @@ public final class ProblemDetails {
     } catch (Exception ignored) {
       // A transport error may not have a JSON body.
     }
-    return of(reply.status(), reply.reason(), detail, instance);
+    HttpReply problem = of(reply.status(), reply.reason(), detail, instance);
+    var headers = new java.util.HashMap<>(reply.headers());
+    headers.put("Content-Type", "application/problem+json");
+    return new HttpReply(problem.status(), problem.reason(), problem.body(), headers);
   }
 }

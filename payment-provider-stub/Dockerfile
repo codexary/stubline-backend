@@ -1,3 +1,4 @@
+FROM busybox:1.37.0-musl AS probe
 FROM eclipse-temurin:21.0.12.1_1-jdk-noble AS build
 WORKDIR /src
 COPY .mvn .mvn
@@ -23,6 +24,7 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-pro
 FROM eclipse-temurin:21.0.12.1_1-jre-noble
 RUN useradd --system --uid 10001 --create-home app
 WORKDIR /app
+COPY --from=probe /bin/busybox /bin/busybox
 COPY --from=build /src/payment-provider-stub/target/payment-provider-stub.jar app.jar
 COPY --from=build /src/payment-provider-stub/target/dependency/ lib/
 USER 10001

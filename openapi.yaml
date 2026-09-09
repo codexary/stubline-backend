@@ -8,7 +8,7 @@ info:
   description: Public event inventory and ordering API.
 security: []
 servers:
-  - url: http://localhost:18080
+  - url: https://localhost:8080
 paths:
   /health:
     head:
@@ -99,6 +99,8 @@ paths:
   /orders/{orderId}/ticket:
     get:
       operationId: getTicketDownloadUrl
+      security:
+        - buyerBearer: []
       summary: Get a five-minute signed ticket URL
       parameters:
         - name: orderId
@@ -121,6 +123,10 @@ paths:
                     format: uri
               example:
                 url: https://tickets.example.net/tickets/order-1.pdf
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '503':
@@ -128,6 +134,8 @@ paths:
   /payments:
     post:
       operationId: createPayment
+      security:
+        - buyerBearer: []
       summary: Charge a payment with a 24-hour idempotency key
       parameters:
         - name: Idempotency-Key
@@ -169,8 +177,12 @@ paths:
                 chargeId: charge-1
                 orderId: order-1
                 amountCents: 1500
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '402':
@@ -240,6 +252,8 @@ paths:
   /orders:
     post:
       operationId: placeOrder
+      security:
+        - buyerBearer: []
       summary: Reserve a seat and place an order
       requestBody:
         required: true
@@ -262,6 +276,10 @@ paths:
                 eventId: concert-1
                 seatId: A1
                 createdAt: '2026-10-30T00:00:00Z'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
@@ -277,6 +295,12 @@ paths:
         '504':
           $ref: '#/components/responses/InventoryTimeout'
 components:
+  securitySchemes:
+    buyerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: RS256 buyer access token validated against the configured JWKS.
   responses:
     PaymentDeclined:
       description: Provider definitively declined the payment
@@ -286,6 +310,24 @@ components:
             $ref: '#/components/schemas/Problem'
     Unprocessable:
       description: Provider rejected the request or idempotency key was reused with another body
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: Buyer does not own the order or ticket, or the browser origin is disallowed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unauthorized:
+      description: Missing, invalid or expired buyer bearer token
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+          example: Bearer realm="stubline"
       content:
         application/problem+json:
           schema:

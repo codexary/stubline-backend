@@ -182,6 +182,9 @@ public final class RawHttpServer implements AutoCloseable {
             + "Content-Length: "
             + reply.body().length
             + "\r\n"
+            + reply.headers().entrySet().stream()
+                .map(e -> e.getKey() + ": " + e.getValue() + "\r\n")
+                .collect(java.util.stream.Collectors.joining())
             + "Connection: "
             + (close ? "close" : "keep-alive")
             + "\r\n\r\n";

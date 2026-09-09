@@ -9,8 +9,10 @@ import com.elsworne.stubline.payments.PaymentService;
 import com.elsworne.stubline.payments.PostgresIdempotencyStore;
 import com.elsworne.stubline.tickets.S3TicketStorage;
 import com.elsworne.stubline.tickets.TicketService;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import java.net.URI;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
@@ -40,13 +42,19 @@ public final class TicketingMain {
                 System.getenv().getOrDefault("STUBLINE_INVENTORY_HOST", "localhost")
                     + ":"
                     + System.getenv().getOrDefault("STUBLINE_INVENTORY_PORT", "9090"));
+    var channelBuilder =
+        NettyChannelBuilder.forTarget(target).defaultLoadBalancingPolicy("round_robin");
+    if (System.getenv("STUBLINE_GRPC_CA") == null) channelBuilder.usePlaintext();
+    else
+      channelBuilder.sslContext(
+          GrpcSslContexts.forClient()
+              .trustManager(Path.of(System.getenv("STUBLINE_GRPC_CA")).toFile())
+              .keyManager(
+                  Path.of(System.getenv("STUBLINE_GRPC_CERT")).toFile(),
+                  Path.of(System.getenv("STUBLINE_GRPC_KEY")).toFile())
+              .build());
     GrpcInventoryClient inventory =
-        new GrpcInventoryClient(
-            NettyChannelBuilder.forTarget(target)
-                .defaultLoadBalancingPolicy("round_robin")
-                .usePlaintext()
-                .build(),
-            Duration.ofSeconds(2));
+        new GrpcInventoryClient(channelBuilder.build(), Duration.ofSeconds(2));
     Clock clock = Clock.systemUTC();
     PostgresIdempotencyStore postgresPayments =
         jdbcUrl == null || jdbcUrl.isBlank()
@@ -89,6 +97,18 @@ public final class TicketingMain {
         ticketStorage == null ? null : new TicketService(orderStore, ticketStorage);
     TicketingApi api =
         new TicketingApi(inventory, lookupDelayMillis, payments, service, orderStore, tickets);
+    api.configureCors(System.getenv("STUBLINE_CORS_ORIGINS"));
+    if (System.getenv("STUBLINE_JWKS_URI") != null) {
+      URI jwks = URI.create(System.getenv("STUBLINE_JWKS_URI"));
+      String issuer =
+          System.getenv().getOrDefault("STUBLINE_JWT_ISSUER", "https://dev-token-issuer:8443");
+      BuyerTokens tokens =
+          System.getenv("STUBLINE_JWKS_CA") == null
+              ? new BuyerTokens(jwks, issuer, "stubline-api", clock)
+              : new BuyerTokens(
+                  jwks, issuer, "stubline-api", clock, Path.of(System.getenv("STUBLINE_JWKS_CA")));
+      api.requireBuyerTokens(tokens);
+    }
     OutboxRelay relay =
         orderStore == null
             ? null

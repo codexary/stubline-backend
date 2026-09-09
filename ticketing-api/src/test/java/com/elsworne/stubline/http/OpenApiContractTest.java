@@ -169,6 +169,17 @@ final class OpenApiContractTest {
     }
   }
 
+  static void checkPaymentForbidden(HttpReply reply) {
+    var validator = OpenApiInteractionValidator.createFor("../openapi.yaml").build();
+    var response =
+        SimpleResponse.Builder.status(reply.status())
+            .withContentType(reply.headers().get("Content-Type"))
+            .withBody(new String(reply.body(), java.nio.charset.StandardCharsets.UTF_8))
+            .build();
+    var report = validator.validateResponse("/payments", Request.Method.POST, response);
+    assertFalse(report.hasErrors(), report.getMessages().toString());
+  }
+
   private static URI uri(int port, String path) {
     return URI.create("http://localhost:" + port + path);
   }

@@ -39,6 +39,11 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
 
   public void save(Order order, String buyer, long amountMinor, String currency)
       throws SQLException {
+    save(order, buyer, amountMinor, currency, null);
+  }
+
+  public void save(Order order, String buyer, long amountMinor, String currency, String buyerSub)
+      throws SQLException {
     var event =
         new OrderPlaced(
             order.id(),
@@ -55,12 +60,13 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
       try {
         try (var insert =
             connection.prepareStatement(
-                "INSERT INTO orders(id, event_id, seat_id, created_at) VALUES (?, ?, ?, ?)")) {
+                "INSERT INTO orders(id, event_id, seat_id, created_at, buyer_sub) VALUES (?, ?, ?, ?, ?)")) {
           insert.setString(1, order.id());
           insert.setString(2, order.eventId());
           insert.setString(3, order.seatId());
           insert.setObject(
               4, java.time.OffsetDateTime.ofInstant(order.createdAt(), java.time.ZoneOffset.UTC));
+          insert.setString(5, buyerSub);
           insert.executeUpdate();
         }
         try (var insert =
@@ -77,6 +83,17 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
       } catch (SQLException | RuntimeException e) {
         connection.rollback();
         throw e;
+      }
+    }
+  }
+
+  @Override
+  public boolean ownedBy(String id, String subject) throws SQLException {
+    try (var connection = pool.getConnection();
+        var select = connection.prepareStatement("SELECT buyer_sub FROM orders WHERE id = ?")) {
+      select.setString(1, id);
+      try (var rows = select.executeQuery()) {
+        return rows.next() && subject.equals(rows.getString(1));
       }
     }
   }

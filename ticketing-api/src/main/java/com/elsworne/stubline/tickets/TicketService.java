@@ -16,6 +16,10 @@ public final class TicketService {
     this.storage = storage;
   }
 
+  public boolean ownedBy(String id, String subject) throws SQLException {
+    return orders.ownedBy(id, subject);
+  }
+
   public boolean hasOrder(String id) throws SQLException {
     return orders.find(id).isPresent();
   }
