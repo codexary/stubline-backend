@@ -12,6 +12,8 @@ import com.elsworne.stubline.payments.PaymentService;
 import com.elsworne.stubline.tickets.TicketService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.Map;
@@ -324,43 +326,51 @@ public final class TicketingApi {
         }
       }
       if (request.method().equals("POST") && request.path().equals("/orders")) {
-        JsonNode body = json.readTree(request.body());
-        if (body == null || !body.isObject())
-          return ProblemDetails.of(400, "Bad Request", "Expected a JSON object", request.path());
-        for (String field : new String[] {"eventId", "seatId"}) {
-          if (!body.path(field).isTextual() || body.path(field).asText().isBlank())
+        var span =
+            GlobalOpenTelemetry.getTracer("stubline.orders").spanBuilder("order.place").startSpan();
+        try (var scope = span.makeCurrent()) {
+          JsonNode body = json.readTree(request.body());
+          if (body == null || !body.isObject())
+            return ProblemDetails.of(400, "Bad Request", "Expected a JSON object", request.path());
+          for (String field : new String[] {"eventId", "seatId"}) {
+            if (!body.path(field).isTextual() || body.path(field).asText().isBlank())
+              return ProblemDetails.of(
+                  400,
+                  "Bad Request",
+                  field + " must be a non-empty string",
+                  request.path(),
+                  Map.of("field", field));
+          }
+          String eventId = body.path("eventId").asText(), seatId = body.path("seatId").asText();
+          if (!inventory.reserve(eventId, seatId))
             return ProblemDetails.of(
-                400,
-                "Bad Request",
-                field + " must be a non-empty string",
-                request.path(),
-                Map.of("field", field));
+                409, "Conflict", "seat unavailable", request.path(), Map.of("seatId", seatId));
+          Order order = new Order(UUID.randomUUID().toString(), eventId, seatId, Instant.now());
+          span.setAttribute("order.id", order.id());
+          if (orderStore != null)
+            orderStore.save(
+                order,
+                body.path("buyer").asText("anonymous"),
+                body.path("amountMinor").asLong(0),
+                body.path("currency").asText("AUD"),
+                subject,
+                traceparent(Span.current()));
+          return new HttpReply(
+              201,
+              "Created",
+              json.writeValueAsBytes(
+                  Map.of(
+                      "id",
+                      order.id(),
+                      "eventId",
+                      order.eventId(),
+                      "seatId",
+                      order.seatId(),
+                      "createdAt",
+                      order.createdAt().toString())));
+        } finally {
+          span.end();
         }
-        String eventId = body.path("eventId").asText(), seatId = body.path("seatId").asText();
-        if (!inventory.reserve(eventId, seatId))
-          return ProblemDetails.of(
-              409, "Conflict", "seat unavailable", request.path(), Map.of("seatId", seatId));
-        Order order = new Order(UUID.randomUUID().toString(), eventId, seatId, Instant.now());
-        if (orderStore != null)
-          orderStore.save(
-              order,
-              body.path("buyer").asText("anonymous"),
-              body.path("amountMinor").asLong(0),
-              body.path("currency").asText("AUD"),
-              subject);
-        return new HttpReply(
-            201,
-            "Created",
-            json.writeValueAsBytes(
-                Map.of(
-                    "id",
-                    order.id(),
-                    "eventId",
-                    order.eventId(),
-                    "seatId",
-                    order.seatId(),
-                    "createdAt",
-                    order.createdAt().toString())));
       }
       return ProblemDetails.of(404, "Not Found", "route not found", request.path());
     } catch (io.grpc.StatusRuntimeException e) {
@@ -443,6 +453,18 @@ public final class TicketingApi {
     body.put("seats", page);
     body.put("next", next);
     return new HttpReply(200, "OK", json.writeValueAsBytes(body));
+  }
+
+  private static String traceparent(Span span) {
+    var context = span.getSpanContext();
+    return context.isValid()
+        ? "00-"
+            + context.getTraceId()
+            + "-"
+            + context.getSpanId()
+            + "-"
+            + (context.isSampled() ? "01" : "00")
+        : null;
   }
 
   public int peakInFlight() {

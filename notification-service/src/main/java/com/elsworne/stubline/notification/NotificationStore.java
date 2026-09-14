@@ -37,6 +37,7 @@ public final class NotificationStore implements AutoCloseable {
                 "INSERT INTO handled_events(event_id) VALUES (?) ON CONFLICT DO NOTHING")) {
           insert.setString(1, event.eventId());
           if (insert.executeUpdate() == 0) {
+            LOG.info("Duplicate notification dropped for event {}", event.eventId());
             connection.commit();
             return false;
           }
@@ -66,6 +67,14 @@ public final class NotificationStore implements AutoCloseable {
         var rows = statement.executeQuery("SELECT count(*) FROM notifications")) {
       rows.next();
       return rows.getInt(1);
+    }
+  }
+
+  public boolean ready() {
+    try (var connection = pool.getConnection()) {
+      return connection.isValid(2);
+    } catch (SQLException e) {
+      return false;
     }
   }
 

@@ -22,11 +22,17 @@ RUN --mount=type=cache,target=/root/.m2,sharing=locked ./mvnw -q -pl payment-pro
     ./mvnw -q -pl payment-provider-stub -am org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency
 
 FROM eclipse-temurin:21.0.12.1_1-jre-noble
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/codexary/stubline-backend" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}"
 RUN useradd --system --uid 10001 --create-home app
 WORKDIR /app
 COPY --from=probe /bin/busybox /bin/busybox
+ADD --chmod=0644 --checksum=sha256:e43a270df53c6f423e0ab157be9c27ccc01d5dc3232e162fe54777573db2f149 https://repo.maven.apache.org/maven2/io/opentelemetry/javaagent/opentelemetry-javaagent/2.33.1/opentelemetry-javaagent-2.33.1.jar /app/otel.jar
 COPY --from=build /src/payment-provider-stub/target/payment-provider-stub.jar app.jar
 COPY --from=build /src/payment-provider-stub/target/dependency/ lib/
 USER 10001
 EXPOSE 8081
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=60", "-Dlogback.configurationFile=logback-json.xml", "-cp", "app.jar:lib/*", "com.elsworne.stubline.provider.PaymentProviderMain"]
+ENTRYPOINT ["java", "-javaagent:/app/otel.jar", "-Dotel.exporter.otlp.endpoint=http://otel-collector:4317", "-Dotel.exporter.otlp.protocol=grpc", "-XX:MaxRAMPercentage=60", "-Dlogback.configurationFile=logback-json.xml", "-cp", "app.jar:lib/*", "com.elsworne.stubline.provider.PaymentProviderMain"]

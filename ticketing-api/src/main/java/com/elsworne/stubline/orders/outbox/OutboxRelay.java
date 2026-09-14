@@ -1,5 +1,12 @@
 package com.elsworne.stubline.orders.outbox;
 
+import io.opentelemetry.api.GlobalOpenTelemetry;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -43,14 +50,25 @@ public final class OutboxRelay implements AutoCloseable {
       connection.setAutoCommit(false);
       try (var select =
           connection.prepareStatement(
-              "SELECT id, event_id, payload FROM order_outbox WHERE published_at IS NULL ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED")) {
+              "SELECT id, event_id, payload, traceparent FROM order_outbox WHERE published_at IS NULL ORDER BY created_at, id LIMIT 20 FOR UPDATE SKIP LOCKED")) {
         int count = 0;
         try (var rows = select.executeQuery()) {
           while (rows.next()) {
             String id = rows.getString(1);
-            producer
-                .send(new ProducerRecord<>("order-placed", rows.getString(2), rows.getBytes(3)))
-                .get();
+            try (Scope parent = parentScope(rows.getString(4))) {
+              var span =
+                  GlobalOpenTelemetry.getTracer("stubline.outbox")
+                      .spanBuilder("outbox.publish")
+                      .setAttribute("order.id", id)
+                      .startSpan();
+              try (Scope scope = span.makeCurrent()) {
+                producer
+                    .send(new ProducerRecord<>("order-placed", rows.getString(2), rows.getBytes(3)))
+                    .get();
+              } finally {
+                span.end();
+              }
+            }
             try (var update =
                 connection.prepareStatement(
                     "UPDATE order_outbox SET published_at = now() WHERE id = ?")) {
@@ -67,6 +85,19 @@ public final class OutboxRelay implements AutoCloseable {
         throw e;
       }
     }
+  }
+
+  private static Scope parentScope(String traceparent) {
+    if (traceparent == null || !traceparent.matches("00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}"))
+      return () -> {};
+    String[] parts = traceparent.split("-");
+    var remote =
+        SpanContext.createFromRemoteParent(
+            parts[1],
+            parts[2],
+            TraceFlags.fromByte((byte) Integer.parseInt(parts[3], 16)),
+            TraceState.getDefault());
+    return Context.current().with(Span.wrap(remote)).makeCurrent();
   }
 
   @Override

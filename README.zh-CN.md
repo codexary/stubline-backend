@@ -93,7 +93,7 @@ docker compose down
 
 ## 支付服务故障
 
-独立启动 provider：`PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`。启动 `ticketing-api` 时设置 `STUBLINE_PAYMENT_PROVIDER_URL=http://localhost:8081`。`POST /payments/charge` 只调用一次；`GET /payments/charge-status` 可用指数退避和 full jitter 再试两次。二者共用两秒请求 deadline，每次调用只使用剩余预算。客户端记录 circuit breaker 状态变化；四次失败使其打开，此后请求快速失败，三秒后成功的试探请求使其关闭。收费响应不确定时，收费可能已经完成，因此不能盲目重试；安全重试需要后续改动加入的 idempotency key。运行 `./scripts/payment-breaker-demo.sh` 可看到 503、快速拒绝及恢复后的 200。
+独立启动 provider：`PROVIDER_PORT=8082 PROVIDER_LATENCY_MS=100 PROVIDER_ERROR_RATE=0.25 PROVIDER_OUTAGE=false ./mvnw -q -pl payment-provider-stub exec:java -Dexec.mainClass=com.elsworne.stubline.provider.PaymentProviderMain`。启动 `ticketing-api` 时设置 `STUBLINE_PAYMENT_PROVIDER_URL=http://localhost:8082`。`POST /payments/charge` 只调用一次；`GET /payments/charge-status` 可用指数退避和 full jitter 再试两次。二者共用两秒请求 deadline，每次调用只使用剩余预算。客户端记录 circuit breaker 状态变化；四次失败使其打开，此后请求快速失败，三秒后成功的试探请求使其关闭。收费响应不确定时，收费可能已经完成，因此不能盲目重试；安全重试需要后续改动加入的 idempotency key。运行 `./scripts/payment-breaker-demo.sh` 可看到 503、快速拒绝及恢复后的 200。
 
 ## 容器中的进程
 
@@ -119,7 +119,7 @@ docker compose down
 
 `inventory-api` 定义 `.proto` 契约并生成 Java stub；`inventory-service` 管理 PostgreSQL 座位并在 9090 端口提供 gRPC。`ticketing-api` 的每次查询和预订都使用两秒 deadline。stub 就是远程调用所依赖的代理：本地方法调用被编码并发往远程进程，回复或状态变为 Java 结果或异常。`NOT_FOUND` 映射为 HTTP 404，已占座的 `FAILED_PRECONDITION` 为 409，`DEADLINE_EXCEEDED` 为 504，`UNAVAILABLE` 为 503。相较于普通 socket，契约可生成客户端和服务端代码，deadline 限制等待时间，状态码能区分故障。504 **不能**证明座位未被预订：服务端可能已经修改状态，只是回复丢失或超时。重试非幂等操作前应先核对。
 
-运行 `docker compose up --build -d --wait`，再运行 `curl --cacert certs/dev/public-ca.crt https://localhost:8080/events/concert-1/seats` 和 `curl --cacert certs/dev/public-ca.crt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker clean verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
+先运行 `./scripts/dev-ca.sh`、`docker compose up --build -d --wait`，再设置 `TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')`。接着运行 `curl --cacert certs/dev/public-ca.crt https://localhost:8080/events/concert-1/seats` 和 `curl --cacert certs/dev/public-ca.crt -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders`。预期依次为 200、201；重复下单为 409。用 `docker compose ps inventory-service` 检查标准 gRPC health 服务。`./mvnw -q -Pdocker clean verify` 还通过 Testcontainers 验证真实 gRPC 传输和 PostgreSQL。本地 HTTP 演示现在需要库存服务（`STUBLINE_INVENTORY_TARGET=localhost:9090`）；内存库存仅供独立测试。
 
 ## 持久的订单事件
 
@@ -142,9 +142,9 @@ Compose 创建三个 PostgreSQL 数据库：`inventory`、`ticketing` 和 `notif
 
 `POST /orders` 预留座位后，使用该订单 ID 和 `Idempotency-Key` 调用 `POST /payments` 扣款。成功后，API 生成包含订单 ID、活动、座位和确定性 QR-like 图案的单页 PDF，上传至 `stubline-tickets` bucket 的 `tickets/<order-id>.pdf`，持有订单行锁并条件更新 object key。并发签发者会等待，看到已有 key 后跳过上传。如果上传后、事务提交前崩溃，确定性 key 对应的对象可能暂时孤立；后续重试覆盖同一对象并记录 key。`GET /orders/{id}/ticket` 对已付款订单返回 `{"url":"..."}`，未知或未付款订单返回 404。presigned GET URL 有效五分钟：持有 URL 的人可在期限内读取这个对象，无需获得 S3 凭据。
 
-运行 `docker compose up --build -d --wait`，按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' https://localhost:8080/payments`，再运行 `curl --cacert certs/dev/public-ca.crt -s -H "Authorization: Bearer $TOKEN" https://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker clean verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
+先运行 `./scripts/dev-ca.sh`、`docker compose up --build -d --wait`，并设置 `TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')`；按“持久订单事件”一节的下单命令创建订单并复制返回的 `id`。接着运行 `curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" -H 'Idempotency-Key: ticket-demo-1' -H 'Content-Type: application/json' -d '{"orderId":"<id>","amountCents":2500}' https://localhost:8080/payments`，再运行 `curl --cacert certs/dev/public-ca.crt -s -H "Authorization: Bearer $TOKEN" https://localhost:8080/orders/<id>/ticket`。预期先收到 201，再收到含 `url` 的 JSON；URL 指向 `http://localhost:8333/stubline-tickets/tickets/<id>.pdf`，其中 `X-Amz-Expires=300`。下载后 PDF 以 `%PDF-1.4` 开头。未知 ID 返回 404。`./mvnw -q -Pdocker clean verify` 检查真实 SeaweedFS presigned PUT 上传、签名下载和 URL 过期拒绝。
 
-票据文件的生命周期和读取方式与订单行不同。对象存储承载文件字节、访问授权和扩容，避免撑大事务数据库，也不要求每个 API 副本挂载同一目录。PostgreSQL 保留权威订单和 object key。代码只调用 S3 API：使用 AWS S3 时设置 `STUBLINE_S3_BUCKET`、`STUBLINE_S3_REGION` 和标准 AWS 凭据，不设置 endpoint override；使用 SeaweedFS 时设置 `STUBLINE_S3_ENDPOINT`、`STUBLINE_S3_PUBLIC_ENDPOINT` 和 `STUBLINE_S3_PATH_STYLE=true`。公开 endpoint 必须能从买家浏览器解析，因为 host 参与签名。
+本地 presigned ticket URL 使用 HTTP，仅因本地 SeaweedFS endpoint 是 HTTP；生产 object store 通过 HTTPS 访问。票据文件的生命周期和读取方式与订单行不同。对象存储承载文件字节、访问授权和扩容，避免撑大事务数据库，也不要求每个 API 副本挂载同一目录。PostgreSQL 保留权威订单和 object key。代码只调用 S3 API：使用 AWS S3 时设置 `STUBLINE_S3_BUCKET`、`STUBLINE_S3_REGION` 和标准 AWS 凭据，不设置 endpoint override；使用 SeaweedFS 时设置 `STUBLINE_S3_ENDPOINT`、`STUBLINE_S3_PUBLIC_ENDPOINT` 和 `STUBLINE_S3_PATH_STYLE=true`。公开 endpoint 必须能从买家浏览器解析，因为 host 参与签名。
 
 NFS 这类分布式文件系统提供文件路径和客户端缓存，常有 close-to-open 与属性缓存的刷新规则。S3 API 提供整个对象的 PUT、GET 和按前缀 listing，而不是 POSIX 的 open/write/close。把成功的 PUT 作为新票据 key 的发布点。已发票据使用不可变 key，避免覆盖：缓存和 gateway 可能保留旧版本，不同 S3 兼容实现的 listing 可见性和覆盖行为也可能不同。根据数据库记录的精确 key 获取对象，不把 listing 当作权威来源。
 
@@ -154,13 +154,13 @@ Compose 的内部网络为每个服务提供 DNS 名称。ticketing 通过名称
 
 在已运行或全新 stack 上运行 `./scripts/dns-discovery-demo.sh`。脚本先启动一个 inventory 副本，不重启 `ticketing-api` 地扩为两个；扩容后再次运行固定解析客户端，等待 25 秒让连接退役并刷新 DNS，然后发送 24 次请求，打印每个副本实际处理数。实测第二次 `/diagnostics/dns?name=inventory-service` 返回 `addresses:["172.22.0.9","172.22.0.6"]` 和 `effectiveTtl:"5"`。实际地址由 Docker 分配，每次不同。固定解析客户端在扩容前后都只打印一个选中的地址并通过它完成请求，即使扩容后 Compose DNS 已返回两个地址。一次运行中，两个容器分别处理 11 和 13 个请求，总数 24；实际地址和分布每次可能不同。
 
-`JAVA_TOOL_OPTIONS=-Dsun.net.inetaddr.ttl=5` 限制 ticketing JVM 的正向 DNS 缓存时间。`GET /diagnostics/dns?name=<host>` 报告 JVM 查询结果和 `networkaddress.cache.ttl`（或 JVM 的 `sun.net.inetaddr.ttl` fallback）的有效值。客户端若只解析一次名称并以所得地址建立 channel，即使 DNS 后来变化也仍固定在该地址。普通 gRPC channel 使用目标名称和 `round_robin`，让 DNS resolver 刷新地址集合并分发调用。单靠 DNS TTL 不会重新分配已建立的连接。
+ticketing JVM entrypoint 上的 `-Dsun.net.inetaddr.ttl=5` 限制 ticketing JVM 的正向 DNS 缓存时间。`GET /diagnostics/dns?name=<host>` 报告 JVM 查询结果和 `networkaddress.cache.ttl`（或 JVM 的 `sun.net.inetaddr.ttl` fallback）的有效值。客户端若只解析一次名称并以所得地址建立 channel，即使 DNS 后来变化也仍固定在该地址。普通 gRPC channel 使用目标名称和 `round_robin`，让 DNS resolver 刷新地址集合并分发调用。单靠 DNS TTL 不会重新分配已建立的连接。
 
 5 秒 JVM DNS TTL 避免旧地址无限期留在缓存，但仅有 TTL 不够：gRPC 在连接事件发生时才重新解析，不会仅因 TTL 到期而刷新。inventory server 设定 15 秒 `maxConnectionAge` 与 5 秒 grace，让命名的 `round_robin` channel 重新连接并发现新增副本。演示值刻意较短；生产环境通常采用更长的值，例如 30 分钟，并结合部署及连接排空要求调整。连接退役增加 TLS 握手、连接建立和 DNS 查询开销，也会短暂重新分布负载；grace 让进行中的 RPC 完成。
 
 ## 传输安全与买家 token
 
-先运行 `./scripts/dev-ca.sh`，再启动 Compose。脚本在忽略的 `certs/dev/` 下创建两个短期开发 CA：对外 API CA 与独立的内部 gRPC CA。server 证书的 SAN 含 Compose DNS 名和 `localhost`。脚本导出 PKCS#12 keystore；每个服务只读挂载所需证书与密钥。挂载的私钥和 keystore 权限为 600，属主为服务 UID 10001。真实团队从受信 CA 取得证书，在 secrets manager 中保护私钥、到期前轮换，绝不提交密钥。
+先运行 `./scripts/dev-ca.sh`，再启动 Compose。脚本重用有效证书，只续期七天内将过期的证书；`--force` 才强制轮换全部证书。脚本在忽略的 `certs/dev/` 下创建两个短期开发 CA：对外 API CA 与独立的内部 gRPC CA。server 证书的 SAN 含 Compose DNS 名和 `localhost`。脚本导出 PKCS#12 keystore；每个服务只读挂载所需证书与密钥。挂载的私钥和 keystore 权限为 600，属主为服务 UID 10001。真实团队从受信 CA 取得证书，在 secrets manager 中保护私钥、到期前轮换，绝不提交密钥。
 
 JWT 签名演示使用当前 HTTPS issuer 的 JWKS。启动 Compose 后，在仓库根目录运行：
 
@@ -177,7 +177,7 @@ curl --cacert certs/dev/public-ca.crt -i -X POST -H 'Content-Type: application/j
 
 座位列表支持 `limit`（1–100，默认 20）和不透明 `cursor`；响应包含 `seats` 与 `next`。本地 PostgreSQL 配置见 `.env.example`，复制为 `.env`；启用数据库时必须提供用户和密码。
 
-容器使用 `/health/ready` 探针；`/health/live` 表示进程存活。就绪状态只检查本地 PostgreSQL，不级联检查支付服务。容器输出 JSON 日志，SIGTERM 最多等待十秒完成请求。
+容器使用 `/health/ready` 探针；`/health/live` 表示进程存活。就绪状态只检查本地 PostgreSQL，不级联检查支付服务。容器输出 JSON 日志。收到 SIGTERM 后，ticketing 先停止公开监听并最多等待十秒让请求完成，再关闭管理监听；然后停止 outbox worker，最多等待 15 秒让当前批次提交或回滚，超时则中断批次，最后关闭 Kafka producer、票据存储、数据库连接池和远程客户端。每一步都会记录日志。ticketing 容器的停止宽限期为 40 秒；中断后仍未发布的行会在重启后重试。
 
 库存拆为独立服务后，Compose 为 `inventory` 和 `ticketing` 建立独立数据库和用户，服务不共享表或 Flyway 历史。outbox 集成时另建 `notifications` 数据库。迁移现有数据时先停止写入，把座位复制到 `inventory`、支付幂等记录复制到 `ticketing`，核对后再切换流量；示例部署从空数据开始。
 

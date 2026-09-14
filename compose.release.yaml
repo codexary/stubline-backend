@@ -1,0 +1,30 @@
+services:
+  ticketing-api:
+    environment:
+      OTEL_SERVICE_NAME: ticketing-api
+    image: stubline/ticketing-api:${RELEASE_VERSION}-${RELEASE_COMMIT}
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 768m
+  inventory-service:
+    image: stubline/inventory-service:${RELEASE_VERSION}-${RELEASE_COMMIT}
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 512m
+    deploy:
+      replicas: 2
+  notification-service:
+    image: stubline/notification-service:${RELEASE_VERSION}-${RELEASE_COMMIT}
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 384m
+  payment-provider-stub:
+    image: stubline/payment-provider-stub:${RELEASE_VERSION}-${RELEASE_COMMIT}
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 256m
+  dev-token-issuer:
+    image: stubline/dev-token-issuer:${RELEASE_VERSION}-${RELEASE_COMMIT}
+    restart: unless-stopped
+    cpus: 0.5
+    mem_limit: 256m

@@ -120,7 +120,7 @@ public final class TicketingMain {
     if (relayWorker != null)
       relayWorker.submit(
           () -> {
-            while (!Thread.currentThread().isInterrupted()) {
+            while (!relayWorker.isShutdown() && !Thread.currentThread().isInterrupted()) {
               try {
                 relay.publishBatch();
                 Thread.sleep(500);
@@ -142,41 +142,51 @@ public final class TicketingMain {
             : ServerExecutor.VIRTUAL;
     int poolSize = args.length > 3 ? Integer.parseInt(args[3]) : 16;
     int adminPort = Integer.parseInt(System.getenv().getOrDefault("STUBLINE_ADMIN_PORT", "8081"));
-    try (var admin = new AdminHttpServer(adminPort, api, strategy, poolSize)) {
+    AdminHttpServer admin = null;
+    AutoCloseable publicListener = null;
+    TicketingShutdown shutdown = null;
+    try {
+      admin = new AdminHttpServer(adminPort, api, strategy, poolSize);
       admin.start();
-      Runtime.getRuntime().addShutdownHook(new Thread(admin::close));
       LOG.info("Admin HTTP server listening on loopback port {}", admin.port());
       if (mode.equals("raw")) {
-        try (var server = new RawHttpServer(port, api, strategy, poolSize)) {
-          server.start();
-          Runtime.getRuntime()
-              .addShutdownHook(
-                  new Thread(
-                      () -> {
-                        try {
-                          server.close();
-                        } catch (Exception ignored) {
-                        }
-                      }));
-          LOG.info("Raw HTTP server listening on {}", server.port());
-          new CountDownLatch(1).await();
-        }
+        var server = new RawHttpServer(port, api, strategy, poolSize);
+        publicListener = server;
+        server.start();
+        LOG.info("Raw HTTP server listening on {}", server.port());
       } else if (mode.equals("jdk")) {
-        try (var server = new JdkHttpServer(port, api, strategy, poolSize)) {
-          server.start();
-          Runtime.getRuntime().addShutdownHook(new Thread(server::close));
-          LOG.info("JDK HTTP server listening on {} with {}", server.port(), strategy);
-          new CountDownLatch(1).await();
-        }
+        var server = new JdkHttpServer(port, api, strategy, poolSize);
+        publicListener = server;
+        server.start();
+        LOG.info("JDK HTTP server listening on {} with {}", server.port(), strategy);
       } else throw new IllegalArgumentException("Use raw or jdk");
+      shutdown =
+          new TicketingShutdown(
+              publicListener,
+              admin,
+              relayWorker,
+              relay,
+              ticketStorage,
+              orderStore,
+              inventory,
+              postgresPayments,
+              payments);
+      Runtime.getRuntime().addShutdownHook(new Thread(shutdown, "ticketing-shutdown"));
+      new CountDownLatch(1).await();
     } finally {
-      if (relayWorker != null) relayWorker.shutdownNow();
-      if (relay != null) relay.close();
-      if (ticketStorage != null) ticketStorage.close();
-      if (orderStore != null) orderStore.close();
-      inventory.close();
-      if (postgresPayments != null) postgresPayments.close();
-      if (payments != null) payments.close();
+      if (shutdown == null)
+        shutdown =
+            new TicketingShutdown(
+                publicListener,
+                admin,
+                relayWorker,
+                relay,
+                ticketStorage,
+                orderStore,
+                inventory,
+                postgresPayments,
+                payments);
+      shutdown.run();
     }
   }
 

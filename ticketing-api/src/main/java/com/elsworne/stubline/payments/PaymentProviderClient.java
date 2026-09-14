@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -79,6 +80,17 @@ public final class PaymentProviderClient implements AutoCloseable, ChargeProvide
                         error instanceof IOException
                             && !(error instanceof ProviderRejectedException))
                 .build());
+    GlobalOpenTelemetry.getMeter("stubline.payments")
+        .gaugeBuilder("stubline.payment.breaker.state")
+        .ofLongs()
+        .buildWithCallback(
+            measurement ->
+                measurement.record(
+                    switch (breaker.getState()) {
+                      case OPEN -> 1;
+                      case HALF_OPEN -> 2;
+                      default -> 0;
+                    }));
     breaker
         .getEventPublisher()
         .onStateTransition(

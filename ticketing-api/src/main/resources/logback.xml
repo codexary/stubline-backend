@@ -1,6 +1,6 @@
 <configuration>
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-    <encoder><pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{32} - %msg%n</pattern></encoder>
+    <encoder><pattern>%d{HH:mm:ss.SSS} %-5level [%thread] %logger{32} trace_id=%X{trace_id} span_id=%X{span_id} - %msg%n</pattern></encoder>
   </appender>
   <root level="INFO"><appender-ref ref="CONSOLE"/></root>
 </configuration>

@@ -6,6 +6,7 @@ import com.elsworne.stubline.orders.events.ProtobufEventCodec;
 import com.elsworne.stubline.tickets.TicketRepository;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import io.opentelemetry.api.GlobalOpenTelemetry;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -31,6 +32,27 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
         .table("ticketing_flyway_history")
         .load()
         .migrate();
+    var meter = GlobalOpenTelemetry.getMeter("stubline.orders");
+    meter
+        .gaugeBuilder("stubline.outbox.backlog")
+        .ofLongs()
+        .buildWithCallback(
+            measurement -> {
+              try (var connection = pool.getConnection();
+                  var statement = connection.createStatement();
+                  var rows =
+                      statement.executeQuery(
+                          "SELECT count(*) FROM order_outbox WHERE published_at IS NULL")) {
+                rows.next();
+                measurement.record(rows.getLong(1));
+              } catch (SQLException ignored) {
+              }
+            });
+    meter
+        .gaugeBuilder("stubline.db.pool.active")
+        .ofLongs()
+        .buildWithCallback(
+            measurement -> measurement.record(pool.getHikariPoolMXBean().getActiveConnections()));
   }
 
   public DataSource dataSource() {
@@ -39,10 +61,21 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
 
   public void save(Order order, String buyer, long amountMinor, String currency)
       throws SQLException {
-    save(order, buyer, amountMinor, currency, null);
+    save(order, buyer, amountMinor, currency, null, null);
   }
 
   public void save(Order order, String buyer, long amountMinor, String currency, String buyerSub)
+      throws SQLException {
+    save(order, buyer, amountMinor, currency, buyerSub, null);
+  }
+
+  public void save(
+      Order order,
+      String buyer,
+      long amountMinor,
+      String currency,
+      String buyerSub,
+      String traceparent)
       throws SQLException {
     var event =
         new OrderPlaced(
@@ -71,12 +104,13 @@ public final class OrderStore implements TicketRepository, AutoCloseable {
         }
         try (var insert =
             connection.prepareStatement(
-                "INSERT INTO order_outbox(id, event_id, payload, created_at) VALUES (?, ?, ?, ?)")) {
+                "INSERT INTO order_outbox(id, event_id, payload, created_at, traceparent) VALUES (?, ?, ?, ?, ?)")) {
           insert.setString(1, order.id());
           insert.setString(2, order.eventId());
           insert.setBytes(3, codec.encode(event));
           insert.setObject(
               4, java.time.OffsetDateTime.ofInstant(order.createdAt(), java.time.ZoneOffset.UTC));
+          insert.setString(5, traceparent);
           insert.executeUpdate();
         }
         connection.commit();
