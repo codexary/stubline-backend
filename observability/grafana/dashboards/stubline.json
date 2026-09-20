@@ -1,0 +1,11 @@
+{
+  "uid": "stubline-service-health", "title": "Stubline service health", "schemaVersion": 39, "version": 1,
+  "time": {"from": "now-15m", "to": "now"}, "panels": [
+    {"id": 1, "type": "timeseries", "title": "HTTP request rate by endpoint", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "targets": [{"expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count[1m]))"}]},
+    {"id": 2, "type": "timeseries", "title": "HTTP errors by endpoint", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "targets": [{"expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[1m]))"}]},
+    {"id": 3, "type": "timeseries", "title": "HTTP p95 latency", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "targets": [{"expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket[5m])))"}]},
+    {"id": 4, "type": "timeseries", "title": "Outbox backlog", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "targets": [{"expr": "stubline_outbox_backlog"}]},
+    {"id": 5, "type": "timeseries", "title": "Consumer lag", "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}, "targets": [{"expr": "stubline_consumer_lag"}]},
+    {"id": 6, "type": "timeseries", "title": "Hikari active connections", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}, "targets": [{"expr": "stubline_db_pool_active"}]}
+  ]
+}

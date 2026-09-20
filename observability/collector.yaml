@@ -1,0 +1,39 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+processors:
+  filter/health:
+    error_mode: ignore
+    traces:
+      span:
+        - 'name == "GET /health"'
+        - 'name == "GET /health/live"'
+        - 'name == "GET /health/ready"'
+  batch: {}
+exporters:
+  otlp:
+    endpoint: otel-lgtm:4317
+    tls:
+      insecure: true
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [filter/health, batch]
+      exporters: [otlp]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133

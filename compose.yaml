@@ -1,4 +1,27 @@
 services:
+  otel-collector:
+    stop_grace_period: 15s
+    image: stubline/otel-collector:0.164.0
+    build:
+      context: .
+      dockerfile: observability/collector.Dockerfile
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/collector.yaml:/etc/otelcol/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "/bin/busybox", "wget", "-q", "--spider", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.38.1
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:9091:9090"
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning/dashboards:ro
   postgres:
     stop_grace_period: 15s
     image: postgres:18.6-alpine3.24
