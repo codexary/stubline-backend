@@ -136,6 +136,9 @@ services:
     environment:
       STUBLINE_TLS_KEYSTORE: /certs/dev-token-issuer.p12
       STUBLINE_TLS_PASSWORD: ${STUBLINE_TLS_PASSWORD:?copy .env.example to .env}
+      STUBLINE_OAUTH_CLIENT_ID: ${STUBLINE_OAUTH_CLIENT_ID:?set a public browser client ID}
+      STUBLINE_OAUTH_REDIRECT_URIS: ${STUBLINE_OAUTH_REDIRECT_URIS:?set allowed redirect URIs}
+      STUBLINE_OAUTH_WEB_ORIGINS: ${STUBLINE_OAUTH_WEB_ORIGINS:?set allowed web origins}
       OTEL_SERVICE_NAME: dev-token-issuer
       OTEL_METRIC_EXPORT_INTERVAL: "5000"
     build:

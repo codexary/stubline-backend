@@ -4,6 +4,12 @@
 
 Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。最初采用 modular monolith。当前部署包括 `ticketing-api`、由 PostgreSQL 支持的 gRPC `inventory-service`，以及 Kafka `notification-service`。
 
+## 浏览器登录（开发用 issuer）
+
+开发用 issuer 现在为 public browser client 提供 OAuth 2.0 authorization code + PKCE `S256`。启动 Compose 前，在 `.env` 中设置 `STUBLINE_OAUTH_CLIENT_ID`、以逗号分隔的 `STUBLINE_OAUTH_REDIRECT_URIS` 和 `STUBLINE_OAUTH_WEB_ORIGINS`。redirect URI 必须完全匹配。浏览器客户端没有 secret，不要在前端代码中放置 secret。这些配置没有隐式默认值；`.env.example` 中的值只是本地开发示例。
+
+浏览器生成新的 43–128 字符 `code_verifier`，对它求 SHA-256 并使用 base64url 编码，得到 `code_challenge`。打开 `https://localhost:8443/authorize?response_type=code&client_id=stubline-web&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fcallback&state=STATE&code_challenge=CHALLENGE&code_challenge_method=S256`，将 `STATE` 和 `CHALLENGE` 替换为新值。登录表单要求填写 buyer subject，然后重定向到精确配置的 callback，带回 `code` 和 `state`。检查 state 与当前浏览器会话保存的值一致。在 60 秒内，将 `grant_type=authorization_code`、`code`、`redirect_uri`、`client_id` 和 `code_verifier` 以 `application/x-www-form-urlencoded` 格式 POST 到 `https://localhost:8443/token`。JSON 响应包含 RS256 `access_token`、`token_type: Bearer` 和 `expires_in: 300`；使用 `Authorization: Bearer ...` 向 API 发请求。code 只能使用一次。token 端点只允许配置的 web origin 使用 CORS。`GET /token?sub=buyer-a` 仍可供本地脚本和测试使用。此 issuer 与 buyer-subject 表单仅用于开发。
+
 ## 构建与测试
 
 安装 Java 21。随仓库提供的 Maven wrapper 会下载 Maven 3.9.16。在仓库根目录运行：

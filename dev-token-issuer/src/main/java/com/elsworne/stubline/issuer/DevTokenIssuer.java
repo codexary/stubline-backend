@@ -12,16 +12,19 @@ import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsServer;
 import java.io.FileInputStream;
 import java.net.InetSocketAddress;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 
@@ -140,25 +143,13 @@ public final class DevTokenIssuer {
             out.write(bytes);
           }
         });
-    server.createContext(
-        "/token",
-        exchange -> {
-          try {
-            String query = exchange.getRequestURI().getRawQuery();
-            String sub =
-                query == null
-                    ? "buyer-a"
-                    : URLDecoder.decode(query.replaceFirst("^sub=", ""), StandardCharsets.UTF_8);
-            byte[] bytes = issuer.issue(sub).getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, bytes.length);
-            try (var out = exchange.getResponseBody()) {
-              out.write(bytes);
-            }
-          } catch (Exception e) {
-            exchange.sendResponseHeaders(500, -1);
-            exchange.close();
-          }
-        });
+    new AuthorizationCodeFlow(
+            issuer,
+            required("STUBLINE_OAUTH_CLIENT_ID"),
+            csv(required("STUBLINE_OAUTH_REDIRECT_URIS")),
+            csv(required("STUBLINE_OAUTH_WEB_ORIGINS")),
+            Clock.systemUTC())
+        .register(server);
     server.createContext(
         "/rotate",
         exchange -> {
@@ -172,6 +163,13 @@ public final class DevTokenIssuer {
         });
     server.start();
     Runtime.getRuntime().addShutdownHook(new Thread(() -> server.stop(5)));
+  }
+
+  private static Set<String> csv(String value) {
+    return Arrays.stream(value.split(","))
+        .map(String::trim)
+        .filter(s -> !s.isEmpty())
+        .collect(Collectors.toUnmodifiableSet());
   }
 
   private static String required(String name) {

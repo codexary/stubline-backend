@@ -4,6 +4,12 @@ English | [简体中文](README.zh-CN.md)
 
 Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. It began as a modular monolith. The current deployment has `ticketing-api`, a PostgreSQL-backed gRPC `inventory-service`, and a Kafka `notification-service`.
 
+## Browser sign-in (development issuer)
+
+The development issuer now supports OAuth 2.0 authorization code with PKCE `S256` for a public browser client. Set `STUBLINE_OAUTH_CLIENT_ID`, comma-separated `STUBLINE_OAUTH_REDIRECT_URIS`, and comma-separated `STUBLINE_OAUTH_WEB_ORIGINS` in `.env` before starting Compose. Redirect URIs must match exactly. The browser client has no secret; do not put one in frontend code. These settings have no implicit defaults. The values in `.env.example` are local development examples.
+
+The browser generates a fresh 43–128 character `code_verifier`, hashes it with SHA-256 and base64url-encodes the digest as `code_challenge`. Navigate to `https://localhost:8443/authorize?response_type=code&client_id=stubline-web&redirect_uri=http%3A%2F%2Flocalhost%3A5173%2Fcallback&state=STATE&code_challenge=CHALLENGE&code_challenge_method=S256`, replacing `STATE` and `CHALLENGE` with fresh values. The sign-in form asks for a buyer subject and redirects to the exact configured callback with `code` and `state`. Check that state matches the value stored for the current browser session. Within 60 seconds, POST `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, and `code_verifier` as `application/x-www-form-urlencoded` to `https://localhost:8443/token`. The JSON response contains an RS256 `access_token`, `token_type: Bearer`, and `expires_in: 300`; send the token as `Authorization: Bearer ...` to the API. Codes are single-use. The token endpoint permits CORS only from configured web origins. `GET /token?sub=buyer-a` remains available for local scripts and tests. This issuer and its buyer-subject form are for development only.
+
 ## Build and test
 
 Install Java 21. The included Maven wrapper downloads Maven 3.9.16. From this repository root:
