@@ -122,6 +122,31 @@ paths:
           $ref: '#/components/responses/Unavailable'
         '504':
           $ref: '#/components/responses/InventoryTimeout'
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      security:
+        - buyerBearer: []
+      summary: Retrieve an order belonging to the authenticated buyer
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The buyer's order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
   /orders/{orderId}/ticket:
     get:
       operationId: getTicketDownloadUrl

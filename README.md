@@ -256,6 +256,27 @@ The backup and restore drill (`./scripts/drills/backup-restore.sh`) takes one Po
 
 Each drill prints timestamped statuses and metrics and exits nonzero if its checks fail. The kind node-failure comparison is in `stubline-spike-kind-failover`.
 
+## Buyer event and order lookup
+
+`GET /events` lists the development catalog with `limit` (1–100, default 20), an opaque `cursor`, and `events`/`next` in the response. The sample catalog contains `concert-1`; its seats are seeded by the inventory service. `GET /orders/{id}` requires a buyer token and returns the order's `id`, `eventId`, `seatId` and `createdAt`. A missing order or one belonging to another buyer returns the same 404 Problem Details response.
+
+From the repository root, after `./scripts/dev-ca.sh` and `docker compose up --build -d --wait`, run:
+
+```sh
+curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8080/events?limit=20'
+TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')
+ORDER_ID=$(curl --cacert certs/dev/public-ca.crt -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" "https://localhost:8080/orders/$ORDER_ID"
+OTHER_TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-b')
+curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $OTHER_TOKEN" "https://localhost:8080/orders/$ORDER_ID"
+```
+
+Expect a 200 event page, a 200 order with the same ID, then 404 with `application/problem+json`. Use a clean demo database or choose an available seat if `A1` was already sold.
+
+### Limitations
+
+`POST /payments` accepts `amountCents` from the client; this demonstration does not derive or verify the price from a server-side order total.
+
 ## License
 
 This repository is licensed under the [MIT License](LICENSE).

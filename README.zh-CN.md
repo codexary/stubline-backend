@@ -187,6 +187,27 @@ curl --cacert certs/dev/public-ca.crt -i -X POST -H 'Content-Type: application/j
 
 库存拆为独立服务后，Compose 为 `inventory` 和 `ticketing` 建立独立数据库和用户，服务不共享表或 Flyway 历史。outbox 集成时另建 `notifications` 数据库。迁移现有数据时先停止写入，把座位复制到 `inventory`、支付幂等记录复制到 `ticketing`，核对后再切换流量；示例部署从空数据开始。
 
+## 买家活动与订单查询
+
+`GET /events` 列出开发用活动目录，支持 `limit`（1–100，默认 20）与不透明 `cursor`，响应包含 `events` 和 `next`。示例目录包含 `concert-1`；库存服务会初始化其座位。`GET /orders/{id}` 要求买家 token，返回订单的 `id`、`eventId`、`seatId` 和 `createdAt`。订单不存在或属于其他买家时，返回相同的 404 Problem Details。
+
+在仓库根目录运行 `./scripts/dev-ca.sh` 和 `docker compose up --build -d --wait` 后，执行：
+
+```sh
+curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8080/events?limit=20'
+TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-a')
+ORDER_ID=$(curl --cacert certs/dev/public-ca.crt -fsS -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"eventId":"concert-1","seatId":"A1"}' https://localhost:8080/orders | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $TOKEN" "https://localhost:8080/orders/$ORDER_ID"
+OTHER_TOKEN=$(curl --cacert certs/dev/public-ca.crt -fsS 'https://localhost:8443/token?sub=buyer-b')
+curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $OTHER_TOKEN" "https://localhost:8080/orders/$ORDER_ID"
+```
+
+预期依次看到活动页 200、相同 ID 的订单 200，以及 `application/problem+json` 的 404。如果 `A1` 已售，请使用全新的演示数据库或选择可用座位。
+
+### 已知局限
+
+`POST /payments` 接受客户端提供的 `amountCents`；此演示没有根据服务器端订单总额计算或核对价格。
+
 ## 许可证
 
 本仓库采用 [MIT License](LICENSE)。

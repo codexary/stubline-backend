@@ -182,7 +182,8 @@ public final class TicketingApi {
       boolean protectedRoute =
           request.method().equals("POST")
                   && (request.path().equals("/orders") || request.path().equals("/payments"))
-              || request.method().equals("GET") && request.path().matches("/orders/[^/]+/ticket");
+              || request.method().equals("GET")
+                  && request.path().matches("/orders/[^/]+(?:/ticket)?");
       if (buyerTokens != null && protectedRoute) {
         String authorization = request.header("authorization");
         subject = buyerTokens.subject(authorization);
@@ -270,6 +271,34 @@ public final class TicketingApi {
         return url.isPresent()
             ? new HttpReply(200, "OK", json.writeValueAsBytes(Map.of("url", url.get().toString())))
             : ProblemDetails.of(404, "Not Found", "ticket not found", request.path());
+      }
+      if (request.method().equals("GET") && request.path().matches("/orders/[^/]+")) {
+        if (orderStore == null && ticketService == null)
+          return ProblemDetails.of(
+              503, "Service Unavailable", "order store unavailable", request.path());
+        String orderId = request.path().substring("/orders/".length());
+        if (buyerTokens != null
+            && !(orderStore != null
+                ? orderStore.ownedBy(orderId, subject)
+                : ticketService.ownedBy(orderId, subject)))
+          return ProblemDetails.of(404, "Not Found", "order not found", request.path());
+        var order =
+            orderStore != null ? orderStore.find(orderId) : ticketService.findOrder(orderId);
+        return order.isPresent()
+            ? new HttpReply(
+                200,
+                "OK",
+                json.writeValueAsBytes(
+                    Map.of(
+                        "id",
+                        order.get().id(),
+                        "eventId",
+                        order.get().eventId(),
+                        "seatId",
+                        order.get().seatId(),
+                        "createdAt",
+                        order.get().createdAt().toString())))
+            : ProblemDetails.of(404, "Not Found", "order not found", request.path());
       }
       if (paymentService != null
           && request.method().equals("POST")

@@ -194,6 +194,17 @@ final class OpenApiContractTest {
     assertFalse(report.hasErrors(), report.getMessages().toString());
   }
 
+  static void checkOrderLookup(HttpReply reply) {
+    var validator = OpenApiInteractionValidator.createFor("../openapi.yaml").build();
+    var response =
+        SimpleResponse.Builder.status(reply.status())
+            .withContentType(reply.headers().get("Content-Type"))
+            .withBody(new String(reply.body(), java.nio.charset.StandardCharsets.UTF_8))
+            .build();
+    var report = validator.validateResponse("/orders/order-1", Request.Method.GET, response);
+    assertFalse(report.hasErrors(), report.getMessages().toString());
+  }
+
   private static URI uri(int port, String path) {
     return URI.create("http://localhost:" + port + path);
   }

@@ -50,6 +50,43 @@ final class BuyerAuthorizationTest {
   }
 
   @Test
+  void orderLookupRequiresOwnerAndHidesOtherOrders() throws Exception {
+    try (Fixture f = new Fixture()) {
+      var missing = f.api.handle(new HttpRequest("GET", "/orders/order-1", Map.of(), new byte[0]));
+      assertEquals(401, missing.status());
+      var owner =
+          f.api.handle(
+              new HttpRequest(
+                  "GET",
+                  "/orders/order-1",
+                  Map.of("authorization", "Bearer " + f.issuer.issue("buyer-a")),
+                  new byte[0]));
+      assertEquals(200, owner.status());
+      OpenApiContractTest.checkOrderLookup(owner);
+      assertTrue(
+          new String(owner.body(), StandardCharsets.UTF_8).contains("\"eventId\":\"concert-1\""));
+      var stranger =
+          f.api.handle(
+              new HttpRequest(
+                  "GET",
+                  "/orders/order-1",
+                  Map.of("authorization", "Bearer " + f.issuer.issue("buyer-b")),
+                  new byte[0]));
+      assertEquals(404, stranger.status());
+      assertEquals("application/problem+json", stranger.headers().get("Content-Type"));
+      OpenApiContractTest.checkOrderLookup(stranger);
+      var unknown =
+          f.api.handle(
+              new HttpRequest(
+                  "GET",
+                  "/orders/unknown",
+                  Map.of("authorization", "Bearer " + f.issuer.issue("buyer-a")),
+                  new byte[0]));
+      assertEquals(404, unknown.status());
+    }
+  }
+
+  @Test
   void anotherBuyerCannotReadTicket() throws Exception {
     try (Fixture f = new Fixture()) {
       var reply =

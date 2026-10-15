@@ -1,5 +1,6 @@
 package com.elsworne.stubline.tickets;
 
+import com.elsworne.stubline.orders.Order;
 import java.net.URI;
 import java.sql.SQLException;
 import java.time.Duration;
@@ -22,6 +23,10 @@ public final class TicketService {
 
   public boolean hasOrder(String id) throws SQLException {
     return orders.find(id).isPresent();
+  }
+
+  public Optional<Order> findOrder(String id) throws SQLException {
+    return orders.find(id);
   }
 
   public void issue(String id) throws SQLException {
