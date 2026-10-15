@@ -94,6 +94,20 @@ final class OpenApiContractTest {
         assertEquals(200, health.statusCode());
         check(validator, path, Request.Method.GET, health);
       }
+      var events =
+          client.send(
+              HttpRequest.newBuilder(uri(port, "/events?limit=1")).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, events.statusCode());
+      check(validator, "/events", Request.Method.GET, events);
+      var eventsJson = new com.fasterxml.jackson.databind.ObjectMapper().readTree(events.body());
+      assertEquals("concert-1", eventsJson.path("events").get(0).path("id").asText());
+      var invalidEvents =
+          client.send(
+              HttpRequest.newBuilder(uri(port, "/events?limit=101")).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, invalidEvents.statusCode());
+      check(validator, "/events", Request.Method.GET, invalidEvents);
       var seats =
           client.send(
               HttpRequest.newBuilder(uri(port, "/events/concert-1/seats")).GET().build(),

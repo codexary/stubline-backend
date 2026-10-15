@@ -45,6 +45,32 @@ paths:
           $ref: '#/components/responses/Unavailable'
         '400':
           description: Malformed request
+  /events:
+    get:
+      operationId: listEvents
+      summary: List events in the development catalog
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Opaque cursor returned by the preceding page.
+      responses:
+        '200':
+          description: Events and next page cursor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /events/{eventId}/seats:
     get:
       operationId: listEventSeats
@@ -420,6 +446,28 @@ components:
         status:
           type: string
           example: approved
+    EventPage:
+      type: object
+      required: [events, next]
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        next:
+          type: [string, 'null']
+    Event:
+      type: object
+      additionalProperties: false
+      required: [id, title, startsAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
     SeatPage:
       type: object
       required: [seats, next]

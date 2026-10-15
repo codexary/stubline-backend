@@ -1,5 +1,6 @@
 package com.elsworne.stubline.http;
 
+import com.elsworne.stubline.catalog.Event;
 import com.elsworne.stubline.diagnostics.DnsDiagnostics;
 import com.elsworne.stubline.inventory.InMemoryInventory;
 import com.elsworne.stubline.inventory.Seat;
@@ -16,12 +17,15 @@ import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 /** Transport-independent seat and order routes. */
 public final class TicketingApi {
   private final ObjectMapper json = new ObjectMapper();
+  private static final List<Event> EVENTS =
+      List.of(new Event("concert-1", "Concert 1", Instant.parse("2027-01-01T20:00:00Z")));
   private final DnsDiagnostics dns = new DnsDiagnostics();
   private final SeatInventory inventory;
   private final PaymentProviderClient payments;
@@ -216,6 +220,8 @@ public final class TicketingApi {
         }
         return seatPage(request, eventId);
       }
+      if (request.method().equals("GET") && request.path().equals("/events"))
+        return eventPage(request);
       if (request.method().equals("GET") && request.path().equals("/diagnostics/dns")) {
         String query = request.query();
         if (query == null || !query.startsWith("name="))
@@ -451,6 +457,69 @@ public final class TicketingApi {
     }
     var body = new java.util.LinkedHashMap<String, Object>();
     body.put("seats", page);
+    body.put("next", next);
+    return new HttpReply(200, "OK", json.writeValueAsBytes(body));
+  }
+
+  private HttpReply eventPage(HttpRequest request) throws IOException {
+    int limit = 20;
+    String after = null;
+    if (request.query() != null && !request.query().isBlank()) {
+      for (String part : request.query().split("&")) {
+        String[] pair = part.split("=", 2);
+        String key = java.net.URLDecoder.decode(pair[0], java.nio.charset.StandardCharsets.UTF_8);
+        String value =
+            pair.length == 2
+                ? java.net.URLDecoder.decode(pair[1], java.nio.charset.StandardCharsets.UTF_8)
+                : "";
+        if (key.equals("limit")) limit = Integer.parseInt(value);
+        else if (key.equals("cursor")) {
+          String decoded =
+              new String(
+                  java.util.Base64.getUrlDecoder().decode(value),
+                  java.nio.charset.StandardCharsets.UTF_8);
+          if (!decoded.startsWith("events:") || decoded.length() == "events:".length())
+            throw new IllegalArgumentException("Invalid cursor");
+          after = decoded.substring("events:".length());
+          if (EVENTS.stream()
+              .map(Event::id)
+              .noneMatch(decoded.substring("events:".length())::equals))
+            throw new IllegalArgumentException("Invalid cursor");
+        } else throw new IllegalArgumentException("Unknown query parameter: " + key);
+      }
+    }
+    if (limit < 1 || limit > 100)
+      throw new IllegalArgumentException("limit must be between 1 and 100");
+    var page = new java.util.ArrayList<Event>();
+    for (Event event : EVENTS) {
+      if (after != null && event.id().compareTo(after) <= 0) continue;
+      page.add(event);
+      if (page.size() > limit) break;
+    }
+    String next = null;
+    if (page.size() > limit) {
+      page.remove(page.size() - 1);
+      next =
+          java.util.Base64.getUrlEncoder()
+              .withoutPadding()
+              .encodeToString(
+                  ("events:" + page.getLast().id())
+                      .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+    var body = new java.util.LinkedHashMap<String, Object>();
+    body.put(
+        "events",
+        page.stream()
+            .map(
+                event ->
+                    Map.of(
+                        "id",
+                        event.id(),
+                        "title",
+                        event.title(),
+                        "startsAt",
+                        event.startsAt().toString()))
+            .toList());
     body.put("next", next);
     return new HttpReply(200, "OK", json.writeValueAsBytes(body));
   }
