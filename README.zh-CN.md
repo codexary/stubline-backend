@@ -216,4 +216,18 @@ curl --cacert certs/dev/public-ca.crt -i -H "Authorization: Bearer $OTHER_TOKEN"
 
 Elsworne、Stubline 和团队成员均为虚构。
 
+## 1.1.0 release build
+
+在已配置 `.env` 且 Docker 可用的机器上，从 `1.1.0` release commit 运行：
+
+```sh
+./scripts/dev-ca.sh
+./scripts/build-release.sh 1.1.0
+set -a; source .env.release; set +a
+docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait --scale inventory-service=2
+./scripts/deployed.sh
+```
+
+预期构建五个服务镜像，部署状态检查通过。
+
 本仓库的代码与文档借助 AI 工具编写；记录的输出都来自实际运行。

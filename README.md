@@ -232,7 +232,7 @@ Build a release from the final tagged commit. Each service image is built once a
 
 ```sh
 ./scripts/dev-ca.sh
-./scripts/build-release.sh 1.0.0
+./scripts/build-release.sh 1.1.0
 set -a; source .env.release; set +a
 docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait --scale inventory-service=2
 ./scripts/deployed.sh
