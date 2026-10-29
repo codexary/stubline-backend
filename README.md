@@ -2,6 +2,20 @@ English | [简体中文](README.zh-CN.md)
 
 # Stubline
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/codexary/stubline-backend)
+
+## Run it in the browser
+
+Open this repository with the Codespaces button, then run these commands in its terminal:
+
+```sh
+cp .env.example .env
+./scripts/dev-ca.sh
+docker compose up --build -d --wait
+```
+
+Open the forwarded API (8080), issuer (8443), and Grafana (3000) ports. Codespaces usage counts against your own GitHub quota.
+
 Stubline is Elsworne's event ticketing platform for events, seats, orders, payments, notifications and e-tickets. It began as a modular monolith. The current deployment has `ticketing-api`, a PostgreSQL-backed gRPC `inventory-service`, and a Kafka `notification-service`.
 
 ## Browser sign-in (development issuer)

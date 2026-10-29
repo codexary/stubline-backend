@@ -2,6 +2,20 @@
 
 # Stubline
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/codexary/stubline-backend)
+
+## 在浏览器中运行
+
+点击 Codespaces 按钮打开本仓库，然后在终端运行：
+
+```sh
+cp .env.example .env
+./scripts/dev-ca.sh
+docker compose up --build -d --wait
+```
+
+打开转发的 API（8080）、issuer（8443）和 Grafana（3000）端口。Codespaces 使用量计入你自己的 GitHub 配额。
+
 Stubline 是 Elsworne 的活动票务平台，涵盖活动、座位、订单、支付、通知和电子票。最初采用 modular monolith。当前部署包括 `ticketing-api`、由 PostgreSQL 支持的 gRPC `inventory-service`，以及 Kafka `notification-service`。
 
 ## 浏览器登录（开发用 issuer）

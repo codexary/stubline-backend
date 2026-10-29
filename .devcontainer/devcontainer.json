@@ -1,0 +1,22 @@
+{
+  "name": "Stubline backend",
+  "image": "mcr.microsoft.com/devcontainers/java:1-21-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/java:1": {
+      "version": "21",
+      "installMaven": "true"
+    }
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+  "forwardPorts": [8080, 8443, 3000],
+  "portsAttributes": {
+    "8080": { "label": "Stubline API" },
+    "8443": { "label": "Development issuer" },
+    "3000": { "label": "Grafana" }
+  },
+  "postCreateCommand": "./mvnw -q -DskipTests install"
+}
