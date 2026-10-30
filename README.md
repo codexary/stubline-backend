@@ -252,6 +252,8 @@ docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait -
 ./scripts/deployed.sh
 ```
 
+`deployed.sh` also runs `check-dashboards.sh` after a few sample API requests. Each of the six panels must return a Prometheus series; a value of zero is valid, including for HTTP errors. The check fails if the dashboard, datasource, panel, or series is missing.
+
 Each drill starts a fresh ephemeral stack (`down -v` removes its demo data), runs pinned k6 2.3.0 at two virtual users, injects and recovers a failure, prints timestamped statuses and telemetry, asserts the outcome, and exits nonzero on failure. Run them one at a time after building the release:
 
 ```sh
