@@ -1,4 +1,7 @@
 services:
+  otel-lgtm:
+    volumes:
+      - ./observability/grafana/provisioning/stubline.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/stubline.yaml:ro
   ticketing-api:
     environment:
       OTEL_SERVICE_NAME: ticketing-api
