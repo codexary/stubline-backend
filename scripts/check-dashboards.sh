@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Produce a small amount of API traffic. A zero value is healthy; an empty
-# Prometheus result is not. The HTTP error panel uses a zero fallback because
-# a stack without 5xx responses has no error time series.
-for _ in 1 2 3; do
+# Keep a trickle of API traffic while the checks run. A zero value is healthy;
+# an empty Prometheus result is not. The HTTP error panel uses a zero fallback
+# because a stack without 5xx responses has no error time series.
+# rate() needs the counter to grow between two exported samples. On a fresh
+# stack a short burst creates the series at its final value, so its rate stays
+# zero however long the check waits.
+while :; do
   curl --cacert certs/dev/public-ca.crt --fail --silent --show-error \
-    'https://localhost:8080/events?limit=1' >/dev/null
-done
+    'https://localhost:8080/events?limit=1' >/dev/null || true
+  sleep 1
+done &
+traffic=$!
+trap 'kill "$traffic" 2>/dev/null || true' EXIT
 
 python3 - <<'PY'
 import json

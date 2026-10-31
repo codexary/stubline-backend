@@ -254,7 +254,7 @@ docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait -
 
 Release checklist: verify what the operator sees in Grafana: open the **Stubline service health** dashboard in the Stubline folder and inspect all six panels after the scripted check passes.
 
-`deployed.sh` also runs `check-dashboards.sh` after a few sample API requests. Each of the six panels must return a Prometheus series; a value of zero is valid, including for HTTP errors. The check fails if the dashboard, datasource, panel, or series is missing.
+`deployed.sh` also runs `check-dashboards.sh`. Each of the six panels must return a Prometheus series; a value of zero is valid, including for HTTP errors. The request-rate panel must also show traffic on a business route such as `/events`, not only on `/`. The check fails if the dashboard, datasource, panel, or series is missing. While it waits, the check sends one `GET /events` per second: `rate()` needs the counter to grow between two exported samples, and on a fresh stack a short burst creates the series at its final value, so its rate would stay zero.
 
 Each drill starts a fresh ephemeral stack (`down -v` removes its demo data), runs pinned k6 2.3.0 at two virtual users, injects and recovers a failure, prints timestamped statuses and telemetry, asserts the outcome, and exits nonzero on failure. Run them one at a time after building the release:
 
