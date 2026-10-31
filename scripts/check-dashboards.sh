@@ -40,6 +40,11 @@ except (urllib.error.URLError, KeyError, ValueError) as error:
 print("PASS Stubline dashboard (stubline-service-health) is loaded")
 panels = {panel["id"]: panel for panel in dashboard.get("panels", [])}
 failed = False
+business_routes = {
+    "/events", "/events/{eventId}/seats", "/orders", "/orders/{orderId}",
+    "/orders/{orderId}/ticket", "/payments", "/payments/charge",
+    "/payments/charge-status",
+}
 for panel_id, name in names.items():
     panel = panels.get(panel_id)
     if not panel or not panel.get("targets"):
@@ -59,6 +64,17 @@ for panel_id, name in names.items():
             result = get(path)
             series = result.get("data", {}).get("result", []) if result.get("status") == "success" else []
             if series:
+                if panel_id == 1:
+                    routes = sorted((item.get("metric", {}).get("http_route", "<missing>"), float(item["value"][1])) for item in series)
+                    if not any(route in business_routes and rate > 0 for route, rate in routes):
+                        if attempt < 11:
+                            time.sleep(5)
+                            continue
+                        print("HTTP request rate routes: " + ", ".join(f"{route}={rate:.4g}/s" for route, rate in routes))
+                        print("FAIL HTTP request rate: no active business route template; API traffic may be grouped under /")
+                        failed = True
+                        break
+                    print("HTTP request rate routes: " + ", ".join(f"{route}={rate:.4g}/s" for route, rate in routes))
                 print(f"PASS {name}: {len(series)} series")
                 break
         except (urllib.error.URLError, ValueError):

@@ -48,3 +48,7 @@ Compose 认可挂载，容器健康，Maven 测试覆盖应用行为，遥测也
 | Wang Hao | 在 LGTM 的 provisioning 路径挂载 provider，保留镜像默认配置。 | Grafana API 同时列出 `stubline-service-health` 与内置仪表盘。 |
 | Liu Jia | 在部署检查中运行 `scripts/check-dashboards.sh`。 | 六个面板都返回时间序列；仪表盘或序列缺失时退出码非零。 |
 | Mei Lin | 将“验证值班人员实际看到的内容”加入发布清单。 | 发布说明包含仪表盘检查及值班视图确认。 |
+
+## 后续
+
+仪表盘加载后，值班人员打开它，发现 JDK HTTP 服务端把业务请求都标成上下文路径 `/`。后续修复向服务端遥测提供固定路由模板，在 HTTP 面板中排除探针和管理路由，并要求仪表盘检查找到业务路由时间序列。

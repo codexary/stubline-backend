@@ -15,6 +15,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.instrumentation.api.semconv.http.HttpServerRoute;
+import io.opentelemetry.instrumentation.api.semconv.http.HttpServerRouteSource;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
@@ -130,6 +133,8 @@ public final class TicketingApi {
   }
 
   private HttpReply route(HttpRequest request) {
+    HttpServerRoute.update(
+        Context.current(), HttpServerRouteSource.CONTROLLER, routeTemplate(request));
     String origin = request.header("origin");
     boolean allowedOrigin = origin != null && corsOrigins.contains(origin);
     if (request.method().equals("OPTIONS")
@@ -161,6 +166,30 @@ public final class TicketingApi {
     }
     return secure(
         ProblemDetails.normalize(handleRoute(request), request.path()), request, allowedOrigin);
+  }
+
+  static String routeTemplate(HttpRequest request) {
+    String method = request.method();
+    String path = request.path();
+    if (method.equals("GET") || method.equals("HEAD")) {
+      if (path.equals("/health") || path.equals("/health/live") || path.equals("/health/ready"))
+        return path;
+    }
+    if (method.equals("GET")) {
+      if (path.equals("/events")) return "/events";
+      if (path.matches("/events/[^/]+/seats")) return "/events/{eventId}/seats";
+      if (path.matches("/orders/[^/]+/ticket")) return "/orders/{orderId}/ticket";
+      if (path.matches("/orders/[^/]+")) return "/orders/{orderId}";
+      if (path.equals("/diagnostics/dns")
+          || path.equals("/diagnostics/runtime")
+          || path.equals("/diagnostics/thread")) return path;
+      if (path.equals("/payments/charge-status")) return path;
+    }
+    if (method.equals("POST")) {
+      if (path.equals("/orders") || path.equals("/payments") || path.equals("/payments/charge"))
+        return path;
+    }
+    return null;
   }
 
   private HttpReply secure(HttpReply reply, HttpRequest request, boolean allowedOrigin) {

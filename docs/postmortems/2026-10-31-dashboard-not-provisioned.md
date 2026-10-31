@@ -48,3 +48,7 @@ The failure occurred in a drill. The record does not claim that the same delay o
 | Wang Hao | Mount the provider at the LGTM provisioning path without replacing image defaults. | Grafana API lists `stubline-service-health` alongside built-in dashboards. |
 | Liu Jia | Run `scripts/check-dashboards.sh` in the deployment check. | Each of six panels returns a series; missing dashboard or series exits non-zero. |
 | Mei Lin | Add “verify what the operator sees” to the release checklist. | Release instructions include the dashboard check and operator review. |
+
+## Follow-up
+
+After the dashboard loaded, on-call opened it and found that the JDK HTTP server labeled business requests with its `/` context. The follow-up fix supplies bounded route templates to the server instrumentation, excludes probe and admin routes from the HTTP panels, and requires a business-route series in the dashboard check.

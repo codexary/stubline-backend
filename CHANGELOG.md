@@ -2,6 +2,7 @@
 
 ## 1.2.0 (unreleased)
 
+- Label HTTP server telemetry with bounded route templates, remove probe and admin traffic from the HTTP dashboard panels, and check that a business route appears.
 - Provision the Stubline service dashboard in LGTM without hiding the image dashboards or datasources.
 - Check the loaded dashboard and all six panel series during release deployment.
 - Record the first post-release drill's dashboard provisioning incident and add operator-view verification to the release checklist.

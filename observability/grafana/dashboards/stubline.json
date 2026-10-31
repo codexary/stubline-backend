@@ -20,13 +20,15 @@
       },
       "targets": [
         {
-          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count[1m]))",
+          "expr": "sum by (http_route) (rate(http_server_request_duration_seconds_count{http_route!~\"/health.*|/diagnostics.*|/admin.*|/\"}[1m]))",
+          "legendFormat": "{{http_route}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           }
         }
-      ]
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
     },
     {
       "id": 2,
@@ -40,7 +42,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[1m])) or vector(0)",
+          "expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\",http_route!~\"/health.*|/diagnostics.*|/admin.*|/\"}[1m])) or vector(0)",
+          "legendFormat": "{{http_route}} {{http_response_status_code}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -60,13 +63,15 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{http_route!~\"/health.*|/diagnostics.*|/admin.*|/\"}[5m])))",
+          "legendFormat": "{{http_route}}",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           }
         }
-      ]
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
     },
     {
       "id": 4,
@@ -81,6 +86,7 @@
       "targets": [
         {
           "expr": "stubline_outbox_backlog",
+          "legendFormat": "Outbox backlog",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -101,6 +107,7 @@
       "targets": [
         {
           "expr": "stubline_consumer_lag",
+          "legendFormat": "Consumer lag",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -121,6 +128,7 @@
       "targets": [
         {
           "expr": "stubline_db_pool_active",
+          "legendFormat": "Active database connections",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
