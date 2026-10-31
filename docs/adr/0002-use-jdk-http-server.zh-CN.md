@@ -2,7 +2,7 @@
 
 # ADR 0002：首个票务接口采用 JDK HTTP server
 
-Status: Accepted on 2026-03-27.
+状态：2026-03-27 采纳。
 
 ## 背景（Context）
 

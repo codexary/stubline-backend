@@ -4,7 +4,7 @@
 
 ## 状态（Status）
 
-2026-07-13 采纳。
+2026-07-13 采纳。2026-10-31 更正：最后一段已改为与合并后的就绪检查一致。
 
 ## 背景（Context）
 
@@ -26,4 +26,4 @@
 
 API 现在依赖远端服务，须区分业务拒绝和传输失败。deadline 只限制等待，不能证明服务端没有在稍后生效。库存数据及其迁移归 `inventory-service`。库存服务拆分时的代码尚无预订幂等键，结果不明时仍需核对。
 
-API 就绪客户端查询空名的 gRPC 总体健康状态，`InventoryMain` 则依据数据库就绪状态更新具名的 `stubline.inventory.v1.Inventory`。当前测试验证总体状态，尚未证明数据库故障会传到 API 就绪结果。依赖这条传播路径前，需要对齐两处服务名。
+API 就绪客户端查询具名的 `stubline.inventory.v1.Inventory` 健康状态，`InventoryMain` 依据数据库就绪状态更新它。`InventoryReadinessDockerTest.inventoryDatabaseLossMakesApiNotReady` 表明，库存数据库失联后 API 会报告未就绪。

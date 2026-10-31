@@ -4,7 +4,7 @@ English | [简体中文](0005-bound-payment-provider-calls.zh-CN.md)
 
 ## Status
 
-Accepted on 2026-05-11.
+Accepted on 2026-05-11. Corrected on 2026-10-31: the Consequences section described 4xx handling that the code never had.
 
 ## Context
 
@@ -23,4 +23,4 @@ Each payment route supplies a two second overall deadline. Every HTTP attempt re
 
 ## Consequences
 
-The caller bounds its wait for the full response and reduces avoidable load during an outage. A timeout leaves the charge outcome unknown. The API currently maps both an unknown outcome and a definite provider 4xx rejection to 503, so an API 503 alone does not establish the outcome. Status retries consume provider capacity and deadline time. The breaker is local to each `PaymentProviderClient` instance; `OPEN` is evidence of recent failures, not proof that the provider process crashed. A provider 4xx response is also recorded as a breaker failure. Operators use state transition logs together with provider request observations.
+The caller bounds its wait for the full response and reduces avoidable load during an outage. A timeout leaves the charge outcome unknown. The API maps an unknown outcome to 503 and a definite provider rejection to 402 or 422, so only a 503 leaves the charge outcome open. Status retries consume provider capacity and deadline time. The breaker is local to each `PaymentProviderClient` instance; `OPEN` is evidence of recent failures, not proof that the provider process crashed. A provider 4xx response is a definite answer, not a provider failure, and is not recorded as a breaker failure; `PaymentProviderClientTest.providerRejectionsDoNotCountAsBreakerFailures` covers this. Operators use state transition logs together with provider request observations.

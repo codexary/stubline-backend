@@ -4,7 +4,7 @@ English | [简体中文](0009-extract-inventory-with-grpc.zh-CN.md)
 
 ## Status
 
-Accepted on 2026-07-13.
+Accepted on 2026-07-13. Corrected on 2026-10-31: the last paragraph now matches the readiness check that was merged.
 
 ## Context
 
@@ -26,4 +26,4 @@ After a deadline on `Reserve`, do not assume that the seat remained available an
 
 The API now depends on a remote service and must distinguish business rejection from transport failure. The deadline bounds waiting, not whether a late server action happened. Inventory data and its migration belong to `inventory-service`. The inventory service code has no reservation idempotency key, so reconciliation remains necessary after an unknown outcome.
 
-The API readiness client checks the empty-name overall gRPC health status, while `InventoryMain` updates the named `stubline.inventory.v1.Inventory` status from database readiness. The current test exercises the overall status but does not prove that a database failure changes API readiness. These names need to be aligned before relying on that propagation.
+The API readiness client checks the named `stubline.inventory.v1.Inventory` health status, which `InventoryMain` updates from database readiness. `InventoryReadinessDockerTest.inventoryDatabaseLossMakesApiNotReady` shows that losing the inventory database makes the API report not ready.
