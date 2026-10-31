@@ -33,7 +33,7 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "HTTP errors by endpoint",
+      "title": "HTTP 5xx errors by endpoint",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -42,7 +42,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\",http_route!~\"/health.*|/diagnostics.*|/admin.*|/\"}[1m])) or vector(0)",
+          "expr": "sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\",http_route!~\"/health.*|/diagnostics.*|/admin.*|/\"}[1m])) or label_replace(vector(0), \"http_route\", \"no 5xx\", \"\", \"\")",
           "legendFormat": "{{http_route}} {{http_response_status_code}}",
           "datasource": {
             "type": "prometheus",
