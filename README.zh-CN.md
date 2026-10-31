@@ -242,6 +242,8 @@ docker compose -f compose.yaml -f compose.release.yaml up -d --no-build --wait -
 ./scripts/deployed.sh
 ```
 
+发布清单：验证值班人员实际看到的内容。在 Grafana 的 Stubline 文件夹打开 **Stubline service health**，脚本检查通过后查看六个面板。
+
 `deployed.sh` 会在发送几次示例 API 请求后运行 `check-dashboards.sh`。六个面板都必须返回 Prometheus 时间序列；数值为零也有效，包括 HTTP 错误。仪表盘、数据源、面板或时间序列缺失时检查失败。
 
 预期构建五个服务镜像，部署状态检查通过。
